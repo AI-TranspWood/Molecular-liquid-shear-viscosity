@@ -1,0 +1,26 @@
+;-----------
+; Input file
+;-----------
+integrator          = steep
+nsteps              = 5000
+nstcgsteep          = 100
+emtol               = 0
+emstep              = 0.01
+nstlog              = 100
+nstenergy           = 100
+nstlist             = 10
+ns_type             = grid 
+pbc                 = xyz
+; -----
+; constraints         = h-bonds
+cutoff-scheme       = Verlet
+vdwtype             = cutoff
+vdw-modifier        = None
+rlist               = 1.0
+rvdw                = 1.0
+rvdw-switch         = 1.0
+coulombtype         = PME
+;coulombtype         = cutoff
+rcoulomb            = 1.0
+DispCorr            = EnerPres
+

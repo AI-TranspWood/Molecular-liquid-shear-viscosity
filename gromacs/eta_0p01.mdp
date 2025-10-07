@@ -1,0 +1,41 @@
+;-----------------------------------
+; Input file
+;-----------------------------------
+integrator          = md
+nsteps              = 10000000
+dt                  = 0.001
+;comm_mode           = linear
+;nstcomm             = 100
+nstxout-compressed  = 3000000
+nstvout             = 0
+nstlog              = 1000
+nstenergy           = 50
+nstcalcenergy       = 5
+nstlist             = 50
+ns_type             = grid
+pbc                 = xyz
+;-----------------------------------
+constraints         = none
+cutoff-scheme       = Verlet
+vdwtype             = Cut-off
+vdw-modifier        = None
+rlist               = 1.0
+rvdw                = 1.0
+rvdw-switch         = 1.0
+coulombtype         = PME
+;coulombtype         = Cut-off
+rcoulomb            = 1.0
+DispCorr            = EnerPres
+;-----------------------------------
+; Temperature and pressure coupling
+;-----------------------------------
+ref_t               = 343
+Tcoupl              = v-rescale
+tc-grps             = system
+tau_t               = 1.0
+Pcoupl              = no
+;-----------------------------------
+; Box deformation; shear viscosity using deformation only works as of gromacs 2024
+;-----------------------------------
+deform              = 0.0 0.0 0.0 0.01 0.0 0.0
+deform-init-flow    = yes

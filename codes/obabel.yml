@@ -1,0 +1,11 @@
+---
+label: 'obabel'
+description: 'acpype at Tohtori'
+default_calc_job_plugin: 'gromacs.mdrun'
+filepath_executable: 'obabel'
+computer: 'Tohtori'
+prepend_text: |
+  eval "$(mamba shell hook --shell bash)"
+  mamba activate acpype
+append_text: ' '
+
