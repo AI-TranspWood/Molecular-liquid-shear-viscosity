@@ -15,3 +15,5 @@ def cmd_root():
 def hello():
     """Print a hello world message."""
     click.echo('Hello, AITW-aiida-viscosity!')
+
+from .workflows import cmd_workflow
