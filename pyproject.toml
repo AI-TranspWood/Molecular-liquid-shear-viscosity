@@ -32,6 +32,7 @@ dependencies = [
     'scipy',
     'numpy',
     'matplotlib',
+    # 'veloxchem',
 ]
 
 [project.urls]
@@ -48,7 +49,7 @@ pre-commit = [
 
 
 [project.scripts]
-# aitw-viscosity = ''
+aitw-viscosity = 'aitw_aiida_viscosity.cli:cmd_root'
 
 [project.entry-points.'aiida.calculations']
 
