@@ -1,22 +1,21 @@
 """Implementation of the WorkChain for AITW viscosity calculation."""
-import os
 from glob import glob
-
-from aiida.engine import WorkChain, ToContext, submit
-from aiida.orm import SinglefileData, List
-
-# Local modules (commented out if you don't need in this minimal example)
-from initialize_system_Tohtori import submit_acpype
-from run_minimization_Tohtori import submit_minimization
-from run_equilibration_Tohtori import submit_equilibration
-from compute_partial_charges_Tohtori import submit_veloxchem
-from inject_resp_charges import run_resp_injection
-from modify_topology import update_top_file
-from compute_box_dimensions import get_box_size
-from insert_molecules_Tohtori import build_gro
+import os
 
 from NemdParallelWorkChain import NemdParallelWorkChain
 from PostprocessPressureWorkChain import PostprocessPressureWorkChain
+from aiida.engine import ToContext, WorkChain, submit
+from aiida.orm import List, SinglefileData
+from compute_box_dimensions import get_box_size
+from compute_partial_charges_Tohtori import submit_veloxchem
+# Local modules (commented out if you don't need in this minimal example)
+from initialize_system_Tohtori import submit_acpype
+from inject_resp_charges import run_resp_injection
+from insert_molecules_Tohtori import build_gro
+from modify_topology import update_top_file
+from run_equilibration_Tohtori import submit_equilibration
+from run_minimization_Tohtori import submit_minimization
+
 
 class MonomerWorkChain(WorkChain):
     @classmethod
@@ -63,18 +62,18 @@ class MonomerWorkChain(WorkChain):
         }
         future = self.submit(NemdParallelWorkChain, **inputs)
         return ToContext(nemd=future)
-    
+
     def collect_outputs(self):
         """Collect .edr files from the NEMD parallel run."""
         nemd_wc = self.ctx.nemd
 
         if not nemd_wc.is_finished_ok:
-            self.report("NemdParallelWorkChain did not finish successfully.")
+            self.report('NemdParallelWorkChain did not finish successfully.')
             return
 
         self.ctx.edr_outputs = list(nemd_wc.outputs.edr_outputs.values())
 
-        self.report("All done! Collected outputs:")
+        self.report('All done! Collected outputs:')
         for i, node in enumerate(self.ctx.edr_outputs):
             self.report(f"edr_output {i}: {node.filename}")
             self.out(f'edr_output_{i}', node)
@@ -94,4 +93,3 @@ class MonomerWorkChain(WorkChain):
         for key in self.ctx.postprocess.outputs:
             value = self.ctx.postprocess.outputs[key]
             self.out(key, value)
-

@@ -4,14 +4,16 @@ Also updates the name of the .itp file as this was changed when RESP charges wer
 """
 
 import os
-from aiida.orm import SinglefileData
 from tempfile import NamedTemporaryFile
+
+from aiida.orm import SinglefileData
+
 
 def update_top_file(self):
     # Load original top file from ctx
 
     nmols = self.ctx.nmols
-    
+
     with self.ctx.top.open() as f:
         lines = f.readlines()
 

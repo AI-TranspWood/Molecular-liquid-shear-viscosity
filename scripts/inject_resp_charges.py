@@ -1,6 +1,8 @@
-from aiida.orm import SinglefileData, load_node
-import re
 import os
+import re
+
+from aiida.orm import SinglefileData, load_node
+
 
 def run_resp_injection(self):
     """
@@ -14,7 +16,7 @@ def run_resp_injection(self):
 
     with self.ctx.itp.open() as f_itp:
         itp_lines = f_itp.readlines()
-    
+
     # Extract RESP charges from the PDB file (columns 71-76)
     charges = []
     for line in pdb_lines:

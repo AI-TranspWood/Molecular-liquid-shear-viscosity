@@ -1,8 +1,10 @@
 """Implementation of the WorkChain for virtual lab."""
-import io, os
-from aiida.engine import WorkChain, run
-from MonomerWorkChain import MonomerWorkChain
+import io
+import os
 
-if __name__ == '__main__':    
+from MonomerWorkChain import MonomerWorkChain
+from aiida.engine import WorkChain, run
+
+if __name__ == '__main__':
     result = run(MonomerWorkChain)
     print(result)

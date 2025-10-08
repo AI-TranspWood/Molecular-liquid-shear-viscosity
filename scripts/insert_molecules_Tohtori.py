@@ -1,14 +1,18 @@
 """
 Puts molecules into box, yields the .gro for molecular system
 """
+import os
+import re
+import time
+
 from aiida import orm
+from aiida.orm import Computer, Int, load_code, load_computer, load_node
 from aiida.plugins import DataFactory
-from aiida.orm import Computer, load_computer, load_code, load_node, Int
 from aiida_shell import launch_shell_job
-import time, os, re
+
 
 def build_gro(self):
-    print("Building system... ", flush=True)
+    print('Building system... ', flush=True)
     code = load_code('gromacs2024@Tohtori')
     grofile = self.ctx.gro
     nmols = Int(self.ctx.nmols)
@@ -38,6 +42,3 @@ def build_gro(self):
 #        print(f'{key}: {node.__class__.__name__}<{node.pk}>')
         nodelist.append(int({node.pk}.pop()))
     self.ctx.system_gro = load_node(nodelist[0])
-
-
-

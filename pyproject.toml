@@ -26,9 +26,12 @@ classifiers = [
 keywords = ['aiida', 'workflows']
 requires-python = '>=3.9'
 dependencies = [
-    'aiida_core>=2',
+    'aiida-core>=2',
     'aiida-shell',
     'rdkit',
+    'scipy',
+    'numpy',
+    'matplotlib',
 ]
 
 [project.urls]

@@ -1,10 +1,13 @@
-from aiida.engine import WorkChain, ToContext, calcfunction
+import io
+import re
+
 from aiida import orm
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.optimize import curve_fit
-import io, re
+from aiida.engine import ToContext, WorkChain, calcfunction
 from aiida_shell import launch_shell_job  # assuming you use aiida-shell
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy.optimize import curve_fit
+
 
 @calcfunction
 def extract_deformation_velocities(mdp_files):
@@ -100,7 +103,7 @@ class PostprocessPressureWorkChain(WorkChain):
         for i in sorted(self.ctx.pressure_xvg.keys(), key=int):
             node = self.ctx.pressure_xvg[i]
             with node.open() as file_handle:
-                data = np.loadtxt(file_handle, comments=["@", "#"])
+                data = np.loadtxt(file_handle, comments=['@', '#'])
             avg_pressure = -np.mean(data[:, 1]) # Convert to a positive value
             pressures.append(avg_pressure)
 
@@ -132,18 +135,18 @@ class PostprocessPressureWorkChain(WorkChain):
         """Create log-log plot and fit the Eyring equation."""
         shear_rates = np.array(self.ctx.shear_rates)
         viscosities = np.array(self.ctx.viscosities)
-        
+
         def eyring_viscosity(gamma_dot, eta_N, sigma_E):
             tau = eta_N / sigma_E
-            return (eta_N / (tau * gamma_dot)) * np.log(tau * gamma_dot + np.sqrt((tau * gamma_dot)**2 + 1))        
-        
+            return (eta_N / (tau * gamma_dot)) * np.log(tau * gamma_dot + np.sqrt((tau * gamma_dot)**2 + 1))
+
         fit_successful = True
         eta_N, sigma_E = None, None
-        
+
         eta_N_guess = np.median(viscosities)
         sigma_E_guess = 1e8
         p0 = [eta_N_guess, sigma_E_guess]
-        
+
         try:
             popt, pcov = curve_fit(
                 eyring_viscosity,
@@ -157,11 +160,11 @@ class PostprocessPressureWorkChain(WorkChain):
         except Exception as e:
             fit_successful = False
             self.report(f"Curve fitting failed: {e}")
-            
+
         # Create plot
         fig, ax = plt.subplots()
         ax.loglog(shear_rates, viscosities, 'o', label='MD Data')
-        
+
         if fit_successful:
             shear_rates_fit = np.logspace(np.log10(min(shear_rates)), np.log10(max(shear_rates)), 200)
             ax.loglog(
@@ -174,13 +177,13 @@ class PostprocessPressureWorkChain(WorkChain):
         ax.set_ylabel('Viscosity (mPa·s)')
         ax.set_title('Viscosity vs Shear Rate (log-log)')
         ax.legend()
-        ax.grid(True, which="both", linestyle='--')
-        
+        ax.grid(True, which='both', linestyle='--')
+
         # Save plot
         buf = io.BytesIO()
         fig.savefig(buf, format='png')
         buf.seek(0)
-        
+
         plot_node = orm.SinglefileData(file=buf)
         plot_node.store()
 
@@ -188,12 +191,11 @@ class PostprocessPressureWorkChain(WorkChain):
         plt.tight_layout()
         fig.savefig('viscosity_fit.png')
         self.report("Plot saved locally as 'viscosity_fit.png'.")
-        
+
         # Output
         if fit_successful:
             self.out('fit_parameters', orm.Dict(dict={'eta_mPas': eta_N, 'sigma': sigma_E}).store())
         else:
             self.out('fit_parameters', orm.Dict(dict={'fit_successful': False}).store())
-            
-        self.out('plot', plot_node)
 
+        self.out('plot', plot_node)

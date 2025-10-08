@@ -2,6 +2,7 @@ from aiida.engine import WorkChain
 from aiida.orm import SinglefileData, Str, load_computer
 from aiida_shell import launch_shell_job
 
+
 class NemdGromppWorkChain(WorkChain):
     @classmethod
     def define(cls, spec):

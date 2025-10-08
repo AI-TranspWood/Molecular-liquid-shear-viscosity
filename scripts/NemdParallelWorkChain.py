@@ -1,8 +1,10 @@
-from aiida.engine import WorkChain, ToContext
-from aiida.orm import List, SinglefileData, Str
+import os
+
 from NemdGromppWorkChain import NemdGromppWorkChain
 from NemdMdrunWorkChain import NemdMdrunWorkChain
-import os
+from aiida.engine import ToContext, WorkChain
+from aiida.orm import List, SinglefileData, Str
+
 
 class NemdParallelWorkChain(WorkChain):
     @classmethod
@@ -54,5 +56,5 @@ class NemdParallelWorkChain(WorkChain):
             if not mdrun_wc.is_finished_ok:
                 self.report(f"[{key}] Skipping failed mdrun WorkChain.")
                 continue
-            self.out(f'edr_outputs.{key.replace("mdrun_", "")}', mdrun_wc.outputs.edr_file)
+            self.out(f'edr_outputs.{key.replace('mdrun_', '')}', mdrun_wc.outputs.edr_file)
             self.report(f"[{key}] Output collected: {mdrun_wc.outputs.edr_file.filename}")

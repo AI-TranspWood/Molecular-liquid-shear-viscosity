@@ -2,17 +2,22 @@
 Sets up the .gro, .itp and .top files for a single molecule using ACPYPE
 Converts the molecule into .xyz format (using OpenBabel) for RESP charge calculation
 """
+import io
+import os
+import re
+import time
+
 from aiida import orm
-from aiida.orm import Computer, load_computer, load_code, FolderData, SinglefileData, load_node
+from aiida.orm import Computer, FolderData, SinglefileData, load_code, load_computer, load_node
 from aiida_shell import launch_shell_job
-import time, os, re, io
+
 
 def wrap_file(folder, filename):
     with folder.open(filename, 'rb') as f:
         return SinglefileData(file=io.BytesIO(f.read()), filename=filename).store()
 
 def submit_acpype(self):
-    print("Submitting the aiida-shell subprocess ", flush=True)
+    print('Submitting the aiida-shell subprocess ', flush=True)
     mol = self.ctx.mol
     smiles_string = self.ctx.smiles_string
     ff = self.ctx.ff
@@ -52,7 +57,7 @@ def submit_acpype(self):
     self.ctx.itp = None
     self.ctx.top = None
     self.ctx.pdb = None
-    
+
     for key, node in results_acpype.items():
 #        print(f'{key}: {node.__class__.__name__}<{node.pk}>')
         if isinstance(node, FolderData):
@@ -92,18 +97,17 @@ def submit_acpype(self):
                                       }
                                   }
                                },
-                               outputs=["mol.xyz"]
+                               outputs=['mol.xyz']
     )
 
     print('...in obabel...')
     print(f'Calculation terminated: {node_acpype.process_state}')
     print('Outputs:')
     print(results_obabel.keys())
- 
+
     nodelist=[]
     self.ctx.xyz = None
     for key, node in results_obabel.items():
         print(f'{key}: {node.__class__.__name__}<{node.pk}>')
         nodelist.append(int({node.pk}.pop()))
     self.ctx.xyz = nodelist[0]
-

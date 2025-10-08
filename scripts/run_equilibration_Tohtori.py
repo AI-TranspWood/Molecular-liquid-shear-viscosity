@@ -1,13 +1,17 @@
 """
 Runs system equilibration, yields a system for prodction runs
 """
+import os
+import re
+import time
+
 from aiida import orm
-from aiida.orm import load_computer, load_code, load_node, SinglefileData
+from aiida.orm import SinglefileData, load_code, load_computer, load_node
 from aiida_shell import launch_shell_job
-import time, os, re
+
 
 def submit_equilibration(self):
-    print("Running grompp... ", flush=True)
+    print('Running grompp... ', flush=True)
     code = load_code('gromacs2024@Tohtori')
     grofile = self.ctx.minimized_gro
     topfile = self.ctx.top_updated
@@ -45,17 +49,17 @@ def submit_equilibration(self):
 # gromacs command
 # gmx_mpi mdrun -v -deffnm minimize
 
-    print("Running mdrun... ", flush=True)
+    print('Running mdrun... ', flush=True)
     tprfile = self.ctx.tpr
 
-    custom_scheduler_commands = "\n".join([
-        "#SBATCH -p gen02_ivybridge",
-        "#SBATCH --exclude=c[1003-1006,2001]"
+    custom_scheduler_commands = '\n'.join([
+        '#SBATCH -p gen02_ivybridge',
+        '#SBATCH --exclude=c[1003-1006,2001]'
     ])
 
-    prepend_text = "\n".join([
-        "export OMP_NUM_THREADS=1",
-        "module load gcc/12.2.0"
+    prepend_text = '\n'.join([
+        'export OMP_NUM_THREADS=1',
+        'module load gcc/12.2.0'
     ])
 
     results_mdrun, node_mdrun = launch_shell_job('gmx_mpi',
@@ -84,5 +88,3 @@ def submit_equilibration(self):
     for key, node in results_mdrun.items():
         nodelist.append(node.pk)
     self.ctx.equilibrated_gro = load_node(nodelist[0])
-
-

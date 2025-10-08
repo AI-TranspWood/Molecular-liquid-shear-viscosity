@@ -1,14 +1,20 @@
 """Simple ``aiida-shell`` script to get some values.
 
-Just requires a configured AiiDA profile to be installed. 
+Just requires a configured AiiDA profile to be installed.
 """
+import io
+import os
+import re
+import tempfile
+import time
+
 from aiida import orm
-from aiida.orm import Computer, load_computer, load_code, SinglefileData, load_node
+from aiida.orm import Computer, SinglefileData, load_code, load_computer, load_node
 from aiida_shell import launch_shell_job
-import time, os, re, io, tempfile
+
 
 def submit_veloxchem(self):
-    print("Submitting the aiida-shell subprocess ", flush=True)
+    print('Submitting the aiida-shell subprocess ', flush=True)
     xyzfile = load_node(self.ctx.xyz)
 #    xyzfile = SinglefileData(file=os.path.join(os.getcwd(), 'mol.xyz')) # This for test purposes
 
@@ -24,11 +30,11 @@ resp_charges = resp_drv.compute(molecule, basis, "resp")
     """
     script_file = SinglefileData(file=io.StringIO(script_content), filename='resp.py').store()
     code = load_code('veloxchem@Tohtori')
-    
+
     # Inputs to launch_shell_job
     results_veloxchem, node_veloxchem = launch_shell_job(
         'python',
-        arguments = '{script_file} {xyzfile}', 
+        arguments = '{script_file} {xyzfile}',
         nodes={
             'script_file': script_file,
             'xyzfile': xyzfile
@@ -59,5 +65,3 @@ resp_charges = resp_drv.compute(molecule, basis, "resp")
         print(f'{key}: {node.__class__.__name__}<{node.pk}>')
         nodelist.append(int({node.pk}.pop()))
     self.ctx.pdb = load_node(nodelist[0])
-
-
