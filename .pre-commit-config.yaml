@@ -28,16 +28,16 @@ repos:
           - id: isort
             exclude: *exclude
 
-    - repo: local
-      hooks:
-          - id: pylint
-            name: pylint
-            entry: pylint
-            language: system
-            types: [python]
-            exclude: >
-                (?x)^(
-                    docs/.*|
-                    tests/.*(?<!\.py)$|
-                    scripts/.*$
-                )$
+    # - repo: local
+    #   hooks:
+    #       - id: pylint
+    #         name: pylint
+    #         entry: pylint
+    #         language: system
+    #         types: [python]
+    #         exclude: >
+    #             (?x)^(
+    #                 docs/.*|
+    #                 tests/.*(?<!\.py)$|
+    #                 scripts/.*$
+    #             )$

@@ -1,9 +1,10 @@
 import os
 
-from NemdGromppWorkChain import NemdGromppWorkChain
-from NemdMdrunWorkChain import NemdMdrunWorkChain
 from aiida.engine import ToContext, WorkChain
 from aiida.orm import List, SinglefileData, Str
+
+from .NemdGromppWorkChain import NemdGromppWorkChain
+from .NemdMdrunWorkChain import NemdMdrunWorkChain
 
 
 class NemdParallelWorkChain(WorkChain):

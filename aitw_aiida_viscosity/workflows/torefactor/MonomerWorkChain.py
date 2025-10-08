@@ -2,19 +2,20 @@
 from glob import glob
 import os
 
-from NemdParallelWorkChain import NemdParallelWorkChain
-from PostprocessPressureWorkChain import PostprocessPressureWorkChain
-from aiida.engine import ToContext, WorkChain, submit
-from aiida.orm import List, SinglefileData
-from compute_box_dimensions import get_box_size
-from compute_partial_charges_Tohtori import submit_veloxchem
+from aiida.engine import ToContext, WorkChain
+from aiida.orm import List
+
+from .NemdParallelWorkChain import NemdParallelWorkChain
+from .PostprocessPressureWorkChain import PostprocessPressureWorkChain
+from .compute_box_dimensions import get_box_size
+from .compute_partial_charges_Tohtori import submit_veloxchem
 # Local modules (commented out if you don't need in this minimal example)
-from initialize_system_Tohtori import submit_acpype
-from inject_resp_charges import run_resp_injection
-from insert_molecules_Tohtori import build_gro
-from modify_topology import update_top_file
-from run_equilibration_Tohtori import submit_equilibration
-from run_minimization_Tohtori import submit_minimization
+from .initialize_system_Tohtori import submit_acpype
+from .inject_resp_charges import run_resp_injection
+from .insert_molecules_Tohtori import build_gro
+from .modify_topology import update_top_file
+from .run_equilibration_Tohtori import submit_equilibration
+from .run_minimization_Tohtori import submit_minimization
 
 
 class MonomerWorkChain(WorkChain):
