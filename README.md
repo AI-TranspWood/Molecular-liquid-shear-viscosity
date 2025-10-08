@@ -10,4 +10,3 @@ AiiDA workflow for automated calculation of shear viscosity of a molecular liqui
 - Output: Newtonian shear viscosity
 
 ![Workflow Diagram](images/workflow.png)
-
