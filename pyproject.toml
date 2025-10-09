@@ -32,6 +32,7 @@ dependencies = [
     'scipy',
     'numpy',
     'matplotlib',
+    'rich_click',
     # 'veloxchem',
 ]
 
