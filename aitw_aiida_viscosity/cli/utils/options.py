@@ -4,6 +4,34 @@ from aiida.cmdline.params import types
 from aiida.cmdline.params.options import OverridableOption
 import click
 
+ACPYPE_CODE = OverridableOption(
+    '--acpype', 'acpype_code', type=types.CodeParamType(entry_point='core.shell'),
+    help='A single code for acpype (e.g. acpype@localhost).'
+)
+
+OBABEL_CODE = OverridableOption(
+    '--obabel', 'obabel_code', type=types.CodeParamType(entry_point='core.shell'),
+    help='A single code for Open Babel (e.g. obabel@localhost).'
+)
+
+VELOXCHEM_CODE = OverridableOption(
+    '--veloxchem', 'veloxchem_code', type=types.CodeParamType(),
+    help='A single code for VeloxChem (e.g. veloxchem@localhost).'
+)
+
+GMX_CODE = OverridableOption(
+    '--gromacs', 'gmx_code', type=types.CodeParamType(entry_point='core.shell'),
+    help='A single code for GROMACS mdrun (e.g. gromacs@localhost).'
+)
+
+SMILES_STRING = OverridableOption(
+    '-s',
+    '--smiles-string',
+    type=click.STRING,
+    required=True,
+    help='The SMILE code representation of the molecule to simulate.'
+)
+
 MAX_NUM_MACHINES = OverridableOption(
     '-m',
     '--max-num-machines',

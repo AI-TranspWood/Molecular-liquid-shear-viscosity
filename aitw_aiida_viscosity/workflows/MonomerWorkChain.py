@@ -1,24 +1,25 @@
 """Implementation of the WorkChain for AITW viscosity calculation."""
 from glob import glob
-import io
 import os
 import re
 from tempfile import NamedTemporaryFile
 
 from aiida import orm
 from aiida.engine import ToContext, WorkChain
-from aiida.orm import load_code, load_computer, load_node
+from aiida.orm import load_node
 from aiida_shell import launch_shell_job
 from rdkit import Chem
 from rdkit.Chem import rdMolDescriptors
 
+from . import functions as fnc
 from .NemdParallelWorkChain import NemdParallelWorkChain
 from .PostprocessPressureWorkChain import PostprocessPressureWorkChain
 
 
 def wrap_file(folder, filename):
     with folder.open(filename, 'rb') as f:
-        return orm.SinglefileData(file=io.BytesIO(f.read()), filename=filename).store()
+        return orm.SinglefileData(f, filename=filename).store()
+        # return orm.SinglefileData(file=io.BytesIO(f.read()), filename=filename).store()
 
 class MonomerWorkChain(WorkChain):
     @classmethod
@@ -26,10 +27,32 @@ class MonomerWorkChain(WorkChain):
         super().define(spec)
 
         # INPUTS ############################################################################
+        spec.input('smiles_string', valid_type=orm.Str, help='The SMILES string of the molecule to simulate.')
+        spec.input(
+            'force_field', valid_type=orm.Str,
+            default=lambda: orm.Str('gaff2'),
+            help='The SMILES string of the molecule to simulate.'
+        )
+        spec.input(
+            'nmols', valid_type=orm.Int,
+            default=lambda: orm.Int(1000),
+            help='The number of molecules to insert into the simulation box.'
+        )
+        # spec.input('computer_label', valid_type=orm.Str, help='The computer to run the workflow on.')
+        spec.input('acpype_code', valid_type=orm.AbstractCode, help='Code for running the `acpype` program.')
+        spec.input('obabel_code', valid_type=orm.AbstractCode, help='Code for running the `obabel` program.')
+        spec.input('veloxchem_code', valid_type=orm.AbstractCode, help='Code for python with `veloxchem` installed.')
+        spec.input('gmx_code', valid_type=orm.AbstractCode, help='Code for running `gmx` or `gmx_mpi`.')
+
+        spec.input(
+            'clean_workdir', valid_type=orm.Bool,
+            default=lambda: orm.Bool(False),
+            help='If `True`, work directories of all called calculation will be cleaned at the end of execution.'
+        )
 
         # OUTLINE ############################################################################
         spec.outline(
-            cls.set_initial_values,
+            cls.setup,
             cls.submit_acpype,
             cls.submit_veloxchem,
             cls.run_resp_injection,
@@ -48,42 +71,36 @@ class MonomerWorkChain(WorkChain):
         # OUTPUTS ############################################################################
         spec.outputs.dynamic = True
 
-    def set_initial_values(self):
-        """Optional if you want to include ACPYPE and VeloxChem."""
-        self.ctx.mol = 'ibma'
-        self.ctx.smiles_string = 'CC(=C)C(=O)OC1C[C@H]2CC[C@]1(C)C2(C)C'
-        self.ctx.ff = 'gaff2'
-        self.ctx.basename = self.ctx.mol + '_' + self.ctx.ff + '_am1bcc'
-        self.ctx.nmols = 1000
+    def setup(self):
+        """Setup context variables."""
+        self.ctx.smiles_string = self.inputs.smiles_string.value
+        self.ctx.ff = self.inputs.force_field.value
+        self.ctx.nmols = self.inputs.nmols.value
 
     def submit_acpype(self):
         self.report('Submitting the aiida-shell subprocess ')
-        self.report('Submitting the aiida-shell subprocess ')
-        mol = self.ctx.mol
-        smiles_string = self.ctx.smiles_string
-        ff = self.ctx.ff
-        basename = self.ctx.basename
-        code=load_code('acpype@Tohtori')
+        basename = 'aiida'
+        # code=load_code('acpype@Tohtori')
         results_acpype, node_acpype = launch_shell_job(
-            'acpype',
-            arguments = '-i '+ smiles_string +' -n 0 -c bcc -q sqm -b '+ basename +' -a '+ ff +' -s 108000',
+            self.inputs.acpype_code,
+            arguments=f'-i {{smiles}} -n 0 -c bcc -q sqm -b {basename} -a {{ff}} -s 108000',
+            nodes={
+                'smiles': self.inputs.smiles_string,
+                'ff': self.inputs.force_field
+            },
             metadata={
                 'options': {
-                    'computer': load_computer('Tohtori'),
                     'withmpi': False,
-                    'resources': {
-                        'num_machines': 1,
-                        'num_mpiprocs_per_machine': 1,
-                    }
                 }
             },
-            outputs=[f"{basename}.acpype"]
+            outputs=[f'{basename}.acpype']
         )
 
         self.report('...in acpype...')
         self.report(f'Calculation terminated: {node_acpype.process_state}')
         self.report('Outputs:')
         self.report(results_acpype.keys())
+        self.report(results_acpype)
 
         # Expected filename patterns
         target_suffixes = {
@@ -100,7 +117,7 @@ class MonomerWorkChain(WorkChain):
         self.ctx.pdb = None
 
         for key, node in results_acpype.items():
-    #        self.report(f'{key}: {node.__class__.__name__}<{node.pk}>')
+            # self.report(f'{key}: {node.__class__.__name__}<{node.pk}>')
             if isinstance(node, orm.FolderData):
                 for filename in node.list_object_names():
                     # Match based on suffix
@@ -119,45 +136,35 @@ class MonomerWorkChain(WorkChain):
         self.report(f"TOP: {self.ctx.top.filename if self.ctx.top else 'Not found'}")
         self.report(f"PDB: {self.ctx.pdb.filename if self.ctx.pdb else 'Not found'}")
 
-        # Now convert .pdb to .xyz using OpenBabel
-
-        code=load_code('obabel@Tohtori')
         results_obabel, node_obabel = launch_shell_job(
-                                'obabel',
-                                arguments = '{pdbfile} -O mol.xyz',
-                                nodes={
-                                        'pdbfile': self.ctx.pdb
-                                },
-                                metadata={
-                                    'options': {
-                                        'computer': load_computer('Tohtori'),
-                                        'withmpi': False,
-                                        'resources': {
-                                            'num_machines': 1,
-                                            'num_mpiprocs_per_machine': 1,
-                                        }
-                                    }
-                                },
-                                outputs=['mol.xyz']
+            self.inputs.obabel_code,
+            arguments = '{pdbfile} -O mol.xyz',
+            nodes={
+                'pdbfile': self.ctx.pdb
+            },
+            metadata={
+                'options': {
+                    'withmpi': False,
+                    'redirect_stderr': True,
+                }
+            },
+            outputs=['mol.xyz']
         )
 
         self.report('...in obabel...')
         self.report(f'Calculation terminated: {node_acpype.process_state}')
         self.report('Outputs:')
-        self.report(results_obabel.keys())
+        self.report(results_obabel)
 
-        nodelist=[]
-        self.ctx.xyz = None
-        for key, node in results_obabel.items():
-            self.report(f'{key}: {node.__class__.__name__}<{node.pk}>')
-            nodelist.append(int({node.pk}.pop()))
-        self.ctx.xyz = nodelist[0]
+        self.ctx.xyz = results_obabel['mol_xyz']
 
     def submit_veloxchem(self):
         self.report('Submitting the aiida-shell subprocess ')
-        xyzfile = load_node(self.ctx.xyz)
+        xyzfile = self.ctx.xyz
         # xyzfile = orm.SinglefileData(file=os.path.join(os.getcwd(), 'mol.xyz')) # This for test purposes
 
+        # TODO: this is creating a new node it should be done in a calcfunction also probably generalizing the inputs
+        # EG is 6-31G* what should always beb used? Should this be user settable?
         script_content = '\n'.join([
             'import sys',
             'import veloxchem as vlx',
@@ -168,12 +175,11 @@ class MonomerWorkChain(WorkChain):
             'resp_drv = vlx.RespChargesDriver()',
             'resp_charges = resp_drv.compute(molecule, basis, "resp")',
         ])
-        script_file = orm.SinglefileData(file=io.StringIO(script_content), filename='resp.py').store()
-        code = load_code('veloxchem@Tohtori')
+        script_file = orm.SinglefileData.from_string(script_content, filename='resp.py').store()
 
         # Inputs to launch_shell_job
         results_veloxchem, node_veloxchem = launch_shell_job(
-            'python',
+            self.inputs.veloxchem_code,
             arguments = '{script_file} {xyzfile}',
             nodes={
                 'script_file': script_file,
@@ -181,168 +187,56 @@ class MonomerWorkChain(WorkChain):
             },
             metadata = {
                 'options': {
-                    'computer': load_computer('Tohtori'),
                     'withmpi': False,
-                    'resources': {'num_machines': 1, 'num_mpiprocs_per_machine': 1},
-                    'max_wallclock_seconds': 1200,
-                    'custom_scheduler_commands': ('#SBATCH --cpus-per-task=20\n'),
-                    'prepend_text': (
-                        'export OMP_NUM_THREADS=20\n'
-                        'eval "$(conda shell.bash hook)"\n'
-                        'conda activate echem')
                 }
             },
-            outputs = ['*.pdb']  # <- Tell AiiDA to fetch this file
         )
 
         self.report('...in veloxchem...')
         self.report('Outputs:')
         self.report(results_veloxchem.keys())
 
-        nodelist=[]
-        self.ctx.pdb = None  # This deletes the pdb file from veloxchem but it is no longer needed
-        for key, node in results_veloxchem.items():
-            print(f'{key}: {node.__class__.__name__}<{node.pk}>')
-            nodelist.append(int({node.pk}.pop()))
-        self.ctx.pdb = load_node(nodelist[0])
+        self.ctx.pdb = results_veloxchem['stdout']
 
     def run_resp_injection(self):
         """
         Inject RESP charges from a PDB file into an ITP file and store the result in self.ctx.
         Assumes self.ctx.pdb and self.ctx.itp are SinglefileData nodes.
         """
-        # Retrieve file contents
+        self.ctx.itp_with_resp = fnc.run_resp_injection(
+            pdb_file=self.ctx.pdb,
+            itp_file=self.ctx.itp
+        )
 
-        with self.ctx.pdb.open() as f_pdb:
-            pdb_lines = f_pdb.readlines()
-
-        with self.ctx.itp.open() as f_itp:
-            itp_lines = f_itp.readlines()
-
-        # Extract RESP charges from the PDB file (columns 71-76)
-        charges = []
-        for line in pdb_lines:
-            if line.startswith(('ATOM', 'HETATM')):
-                try:
-                    charge = float(line[70:76].strip())
-                    charges.append(charge)
-                except ValueError:
-                    continue  # Skip any malformed lines
-
-        # Inject charges into ITP file
-        updated_lines = []
-        in_atoms_section = False
-        charge_index = 0
-        for line in itp_lines:
-            if line.strip().startswith('[ atoms ]'):
-                in_atoms_section = True
-                updated_lines.append(line)
-                continue
-            if in_atoms_section:
-                if line.strip().startswith('['):  # End of atoms section
-                    in_atoms_section = False
-                elif line.strip() and not line.strip().startswith(';'):
-                    fields = re.split(r'\s+', line.strip())
-                    if len(fields) >= 7 and charge_index < len(charges):
-                        fields[6] = f"{charges[charge_index]:.6f}"
-                        charge_index += 1
-                        updated_lines.append('    '.join(fields) + '\n')
-                        continue
-            updated_lines.append(line)
-
-        # Write updated ITP file to disk
-        updated_filename = 'updated.itp'
-        with open(updated_filename, 'w') as f_out:
-            f_out.writelines(updated_lines)
-
-        # Store as new AiiDA node
-        updated_itp_node = orm.SinglefileData(file=os.path.abspath('updated.itp')).store()
-        self.ctx.itp_with_resp = updated_itp_node
-        self.report(f'Updated ITP file with RESP charges stored as node <{updated_itp_node.pk}>')
-
-        # Optional: clean up local temp file
-        os.remove(updated_filename)
+        self.report(f'Updated ITP file with RESP charges stored as node <{self.ctx.itp_with_resp.pk}>')
 
     def update_top_file(self):
-        # Load original top file from ctx
-
-        nmols = self.ctx.nmols
-
-        with self.ctx.top.open() as f:
-            lines = f.readlines()
-
-        # Determine the updated .itp filename
-        updated_itp_filename = self.ctx.itp_with_resp.filename
-
-        # Process lines: update .itp reference and [ molecules ] count
-        new_lines = []
-        in_molecules_section = False
-        for line in lines:
-            stripped = line.strip()
-
-            # Replace .itp file reference
-            if stripped.startswith('#include') and stripped.endswith('.itp"'):
-                # Replace with updated itp filename
-                newline = f'#include "{updated_itp_filename}"\n'
-                new_lines.append(newline)
-                continue
-
-            # Update molecule count
-            if '[ molecules ]' in stripped:
-                in_molecules_section = True
-                new_lines.append(line)
-                continue
-            elif in_molecules_section:
-                if stripped and not stripped.startswith(';'):
-                    parts = stripped.split()
-                    if len(parts) >= 2:
-                        parts[1] = str(nmols)  # Update molecule count
-                        newline = f'{parts[0]:<20s}{parts[1]}\n'
-                        new_lines.append(newline)
-                        in_molecules_section = False  # Done with this section
-                        continue
-
-            new_lines.append(line)
-
-        # Write to a new file
-        with NamedTemporaryFile('w+', delete=False, suffix='.top') as f_new:
-            f_new.writelines(new_lines)
-            updated_top_path = f_new.name
-
-        # Store as SinglefileData node
-        self.ctx.top_updated = orm.SinglefileData(file=os.path.abspath(updated_top_path)).store()
+        """Update the .top file to reference the new .itp file and correct molecule count."""
+        self.ctx.top_updated = fnc.update_top_file(
+            nmols=self.inputs.nmols,
+            top_file=self.ctx.top,
+            itp_file=self.ctx.itp_with_resp,
+        )
 
         self.report(f"Updated .top file stored: {self.ctx.top_updated.filename} (pk={self.ctx.top_updated.pk})")
 
     def get_box_size(self):
         """Approximate molar mass from SMILES string using RDKit and store as AiiDA Float node."""
-        smiles = self.ctx.smiles_string
-        mol = Chem.MolFromSmiles(smiles)
-        nmols = self.ctx.nmols
+        self.ctx.box_size = fnc.get_box_size(
+            nmols=self.inputs.nmols,
+            smiles_string=self.inputs.smiles_string
+        )
 
-        if mol is None:
-            raise ValueError(f"Invalid SMILES string: {smiles}")
-
-        mw = rdMolDescriptors.CalcExactMolWt(mol)
-
-        Na = 6.022e23
-        rho = 0.5 # g/cm3 - small enough so that gmx insert-molecule works with ease
-        box_volume_cm3 = nmols * mw / (rho * Na)
-        box_volume_nm3 = box_volume_cm3 * 1e21
-        edge_length_nm = box_volume_nm3 ** (1/3)
-
-        # Store in self.ctx and provenance
-        self.ctx.box_size = orm.Float(edge_length_nm).store()
-        self.report(f"Calculated box edge length: {edge_length_nm:.2f} nm")
+        self.report(f"Calculated box edge length: {self.ctx.box_size.value:.2f} nm")
 
     def build_gro(self):
         self.report('Building system... ')
-        code = load_code('gromacs2024@Tohtori')
         grofile = self.ctx.gro
         nmols = orm.Int(self.ctx.nmols)
         box_vector = self.ctx.box_size
+
         results_insert, node_insert = launch_shell_job(
-            'gmx_mpi',
+            self.inputs.gmx_code,
             arguments=(
                 'insert-molecules -ci {grofile} -o system.gro -nmol {nmols} '
                 '-try 1000 -box {box_vector} {box_vector} {box_vector}'
@@ -353,16 +247,11 @@ class MonomerWorkChain(WorkChain):
                 'box_vector': box_vector
             },
             metadata={
-            'options': {
-                'computer': load_computer('Tohtori'),
-                'withmpi': False,
-                'resources': {
-                    'num_machines': 1,
-                    'num_mpiprocs_per_machine': 1,
+                'options': {
+                    'withmpi': False,
                 }
-            }
-        },
-        outputs=['system.gro']
+            },
+            outputs=['system.gro']
         )
 
         nodelist=[]
@@ -372,13 +261,14 @@ class MonomerWorkChain(WorkChain):
 
     def submit_minimization(self):
         print('Running grompp... ')
-        code = load_code('gromacs2024@Tohtori')
         grofile = self.ctx.system_gro
         topfile = self.ctx.top_updated
         itpfile = self.ctx.itp_with_resp
         mdpfile = orm.SinglefileData(file=os.path.join(os.getcwd(), 'minimize.mdp'))
+
+        # code = load_code('gromacs2024@Tohtori')
         results_grompp, node_grompp = launch_shell_job(
-            'gmx_mpi',
+            self.inputs.gmx_code,
             arguments='grompp -f {mdpfile} -c {grofile} -r {grofile} -p {topfile} -o minimize.tpr',
             nodes={
                 'mdpfile': mdpfile,
@@ -388,12 +278,7 @@ class MonomerWorkChain(WorkChain):
             },
             metadata={
                 'options': {
-                    'computer': load_computer('Tohtori'),
                     'withmpi': False,
-                    'resources': {
-                        'num_machines': 1,
-                        'num_mpiprocs_per_machine': 1,
-                    }
                 }
             },
             outputs=['mdout.mdp','minimize.tpr']
@@ -412,32 +297,16 @@ class MonomerWorkChain(WorkChain):
         self.report('Running mdrun... ')
         tprfile = self.ctx.tpr
 
-        custom_scheduler_commands = '\n'.join([
-            '#SBATCH -p gen02_ivybridge',
-            '#SBATCH --exclude=c[1003-1006,2001]'
-        ])
-
-        prepend_text = '\n'.join([
-            'export OMP_NUM_THREADS=1',
-            'module load gcc/12.2.0'
-        ])
-
         results_mdrun, node_mdrun = launch_shell_job(
-            'gmx_mpi',
+            self.inputs.gmx_code,
             arguments='mdrun -v -s {tprfile} -deffnm minimize',
             nodes={
                 'tprfile': tprfile
             },
             metadata={
-            'options': {
-                'computer': load_computer('Tohtori'),
-                'withmpi': True,
-                'resources': {
-                    'num_machines': 1,
-                    'num_mpiprocs_per_machine': 20},
-                'custom_scheduler_commands': custom_scheduler_commands,
-                'prepend_text': prepend_text
-            }
+                'options': {
+                    'withmpi': True,
+                }
             },
             outputs=['minimize.gro']
         )
@@ -452,13 +321,14 @@ class MonomerWorkChain(WorkChain):
 
     def submit_equilibration(self):
         self.report('Running grompp... ')
-        code = load_code('gromacs2024@Tohtori')
         grofile = self.ctx.minimized_gro
         topfile = self.ctx.top_updated
         itpfile = self.ctx.itp_with_resp
         mdpfile = orm.SinglefileData(file=os.path.join(os.getcwd(), 'equilibrate.mdp'))
+
+        # code = load_code('gromacs2024@Tohtori')
         results_grompp, node_grompp = launch_shell_job(
-            'gmx_mpi',
+            self.inputs.gmx_code,
             arguments='grompp -f {mdpfile} -c {grofile} -r {grofile} -p {topfile} -o equilibrate.tpr',
             nodes={
                 'mdpfile': mdpfile,
@@ -468,12 +338,7 @@ class MonomerWorkChain(WorkChain):
             },
             metadata={
                 'options': {
-                    'computer': load_computer('Tohtori'),
                     'withmpi': False,
-                    'resources': {
-                        'num_machines': 1,
-                        'num_mpiprocs_per_machine': 1,
-                    }
                 }
             },
             outputs=['mdout.mdp','equilibrate.tpr']
@@ -493,31 +358,15 @@ class MonomerWorkChain(WorkChain):
         self.report('Running mdrun... ')
         tprfile = self.ctx.tpr
 
-        custom_scheduler_commands = '\n'.join([
-            '#SBATCH -p gen02_ivybridge',
-            '#SBATCH --exclude=c[1003-1006,2001]'
-        ])
-
-        prepend_text = '\n'.join([
-            'export OMP_NUM_THREADS=1',
-            'module load gcc/12.2.0'
-        ])
-
         results_mdrun, node_mdrun = launch_shell_job(
-            'gmx_mpi',
+            self.inputs.gmx_code,
             arguments='mdrun -v -s {tprfile} -deffnm equilibrate',
             nodes={
                 'tprfile': tprfile
             },
             metadata={
                 'options': {
-                    'computer': load_computer('Tohtori'),
                     'withmpi': True,
-                    'resources': {
-                        'num_machines': 1,
-                        'num_mpiprocs_per_machine': 20},
-                    'custom_scheduler_commands': custom_scheduler_commands,
-                    'prepend_text': prepend_text
                 }
             },
             outputs=['equilibrate.gro']

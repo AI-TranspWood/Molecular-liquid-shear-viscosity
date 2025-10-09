@@ -11,7 +11,14 @@ from rich.traceback import install
 import rich_click as click
 
 install(
-    suppress=[original_click, click, aiida, plumpy]
+    width=180,
+    code_width=160,
+    show_locals=True,
+    suppress=[
+        original_click, click,
+        aiida,
+        plumpy
+    ]
 )
 
 @click.group(
