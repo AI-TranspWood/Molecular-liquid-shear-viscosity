@@ -2,7 +2,7 @@ import io
 import re
 
 from aiida import orm
-from aiida.engine import ToContext, WorkChain, calcfunction
+from aiida.engine import WorkChain, calcfunction
 from aiida_shell import launch_shell_job  # assuming you use aiida-shell
 import matplotlib.pyplot as plt
 import numpy as np
@@ -19,7 +19,7 @@ def extract_deformation_velocities(mdp_files):
             content = ''.join(lines)
             match = re.search(r'deform\s*=\s*([-\d.eE+]+\s+[-\d.eE+]+\s+[-\d.eE+]+\s+[-\d.eE+]+)', content)
             if not match:
-                raise ValueError(f"No 'deform' line found in {mdp_path}!")
+                raise ValueError(f"No 'deform' line found in {file_path}!")
             numbers = [float(x) for x in match.group(1).split()]
             deform_velocity = numbers[3]  # 4th number (z direction)
             velocities.append(deform_velocity)  # fourth line

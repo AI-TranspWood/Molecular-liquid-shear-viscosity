@@ -62,7 +62,7 @@ aitw-viscosity = 'aitw_aiida_viscosity.cli:cmd_root'
 [project.entry-points.'aiida.tools.data.orbitals']
 
 [project.entry-points.'aiida.workflows']
-# 'aitw.gromacs.viscosity' = ''
+'aitw.gromacs.viscosity' = 'aitw_aiida_viscosity.workflows:MonomerWorkChain'
 
 [tool.flit.module]
 name = 'aitw_aiida_viscosity'
