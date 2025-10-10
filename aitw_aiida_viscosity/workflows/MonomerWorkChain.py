@@ -427,24 +427,13 @@ class MonomerWorkChain(WorkChain):
 
         self.ctx.equilibrated_gro = results_mdrun[out_filename.replace('.', '_')]
 
-    # def make_gromacs_nemd_inputs(self):
-    #     """Generate GROMACS input files for each shear rate."""
-    #     self.report('Preparing GROMACS NEMD input files for each shear rate...')
-
-    #     self.ctx.srate_inputs = {}
-    #     for shear_rate in self.inputs.shear_rates:
-    #         mdp = fnc.generate_gromacs_shear_rate_input(
-    #             nsteps=self.inputs.num_steps,
-    #             time_step=self.inputs.time_step,
-    #             ref_t=self.inputs.reference_temperature,
-    #             shear_rate=orm.Float(shear_rate)
-    #         )
-    #         self.ctx.srate_inputs[shear_rate] = mdp
-
     def submit_nemd_init(self):
         self.report('Running GROMACS NEMD initialization for each shear rate...')
         fname = 'aiida.tpr'
+        self.ctx.str_shear_rates = []
         for shear_rate in self.inputs.shear_rates:
+            str_srate = str(shear_rate).replace('.', '_').replace('-', 'm')
+            self.ctx.str_shear_rates.append(str_srate)
             mdp_file = fnc.generate_gromacs_shear_rate_input(
                 nsteps=self.inputs.num_steps,
                 time_step=self.inputs.time_step,
@@ -465,11 +454,12 @@ class MonomerWorkChain(WorkChain):
                 submit=True
             )
             self.report(f'Submitted job for shear rate {shear_rate}: {node}')
-            self.to_context(**{f'grompp_{shear_rate}': node})
+            self.to_context(**{f'grompp_{str_srate}': node})
 
     def should_do_alltogheter(self):
         """Check if all shear rates can be in parallel runs."""
         sched = self.ctx.gmx_scheduler
+        self.report(f'Current context: {self.ctx}')
         if isinstance(sched, DIRECT_SCHEDULER):
             self.report('Direct scheduler does not support running multiple jobs.')
             self.ctx.nemd_serial_cnt = 0
@@ -480,8 +470,8 @@ class MonomerWorkChain(WorkChain):
         """Submit the parallel NEMD WorkChain."""
         self.report('Submitting GROMACS NEMD runs as parallel jobs...')
         basename = 'aiida'
-        for srate in self.inputs.shear_rates:
-            tpr_calc = self.ctx[f'grompp_{srate}']
+        for str_srate in self.ctx.str_shear_rates:
+            tpr_calc = self.ctx[f'grompp_{str_srate}']
             tpr_file = tpr_calc.outputs['aiida_tpr']
 
             _, node = launch_shell_job(
@@ -496,7 +486,7 @@ class MonomerWorkChain(WorkChain):
             )
 
             self.report(f'Submitted job: {node}')
-            self.to_context(**{f'nemd_{srate}': node})
+            self.to_context(**{f'nemd_{str_srate}': node})
 
     def do_nemd_serial(self):
         """Check if there are remaining shear rates to run in serial."""
@@ -504,14 +494,14 @@ class MonomerWorkChain(WorkChain):
 
     def submit_nemd_run_serial(self):
         """Submit the serial NEMD WorkChain."""
-        srate = self.inputs.shear_rates[self.ctx.nemd_serial_cnt]
+        str_srate = self.ctx.str_shear_rates[self.ctx.nemd_serial_cnt]
         self.ctx.nemd_serial_cnt += 1
 
         basename = 'aiida'
-        tpr_calc = self.ctx[f'grompp_{srate}']
+        tpr_calc = self.ctx[f'grompp_{str_srate}']
         tpr_file = tpr_calc.outputs['aiida_tpr']
 
-        self.report(f'Submitting GROMACS NEMD run for shear rate {srate} as a serial job...')
+        self.report(f'Submitting GROMACS NEMD run for shear rate {str_srate} as a serial job...')
         _, node = launch_shell_job(
             self.inputs.gmx_code,
             arguments='mdrun -v -s {tpr_file} -deffnm ' + basename,
@@ -525,41 +515,25 @@ class MonomerWorkChain(WorkChain):
 
         self.report(f'Submitted job: {node}')
 
-        return ToContext(**{f'nemd_{srate}': node})
-
-    # def set_nemd_inputs(self):
-    #     """Load prepared input files for NEMD step."""
-    #     mdp_files = sorted(glob('eta_*.mdp'))
-    #     self.ctx.mdp_files = orm.List(list=[os.path.abspath(f) for f in mdp_files])
-
-    # def submit_parallel_nemd(self):
-    #     """Submit the parallel NEMD WorkChain."""
-    #     inputs = {
-    #         'grofile': self.ctx.equilibrated_gro,
-    #         'topfile': self.ctx.top_updated,
-    #         'itpfile': self.ctx.itp_with_resp,
-    #         'mdp_files': self.ctx.mdp_files
-    #     }
-    #     future = self.submit(NemdParallelWorkChain, **inputs)
-    #     return ToContext(nemd=future)
+        return ToContext(**{f'nemd_{str_srate}': node})
 
     def collect_outputs(self):
         """Collect .edr files from the NEMD parallel run."""
         self.report('Collecting .edr files from NEMD runs...')
 
-        calc_map = {srate: self.ctx[f'nemd_{srate}' ] for srate in self.inputs.shear_rates}
+        calc_map = {str_srate: self.ctx[f'nemd_{str_srate}' ] for str_srate in self.ctx.str_shear_rates}
 
-        failed = [srate for srate, calc in calc_map.items() if not calc.is_finished_ok]
+        failed = [str_srate for str_srate, calc in calc_map.items() if not calc.is_finished_ok]
         if failed:
             self.report(f'NEMD runs for shear rates {failed} did not finish successfully.')
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_NEMD
 
         self.ctx.edr_outputs = []
-        for srate, calc in calc_map.items():
+        for str_srate, calc in calc_map.items():
             edr_file = calc.outputs['aiida_edr']
             self.ctx.edr_outputs.append(edr_file)
-            self.report(f'Collected .edr file for shear rate {srate}: {edr_file.filename}')
-            self.out(f'edr_output_{srate}', edr_file)
+            self.report(f'Collected .edr file for shear rate {str_srate}: {edr_file.filename}')
+            self.out(f'edr_output_{str_srate}', edr_file)
 
     # def submit_postprocessing(self):
     #     edr_inputs = {f'edr_{i}': node for i, node in enumerate(self.ctx.edr_outputs)}
