@@ -1,12 +1,8 @@
 """Collection of calcfunctions used by the workchains."""
-import os
 import re
-from tempfile import NamedTemporaryFile
 
 from aiida import orm
-from aiida.engine import ToContext, WorkChain, calcfunction
-from aiida.orm import load_code, load_computer, load_node
-from aiida_shell import launch_shell_job
+from aiida.engine import calcfunction
 from rdkit import Chem
 from rdkit.Chem import rdMolDescriptors
 
@@ -147,3 +143,47 @@ def get_box_size(
     edge_length_nm = box_volume_nm3 ** (1/3)
 
     return  orm.Float(edge_length_nm)
+
+@calcfunction
+def generate_gromacs_minimization_input(minimization_steps: orm.Int) -> orm.SinglefileData:
+    """Generate a basic GROMACS minimization input file."""
+    template = '\n'.join([
+        'integrator          = steep',
+        f'nsteps              = {minimization_steps.value}',
+        'nstcgsteep          = 100',
+        'emtol               = 0',
+        'emstep              = 0.01',
+        'nstlog              = 100',
+        'nstenergy           = 100',
+        'nstlist             = 10',
+        'ns_type             = grid',
+        'pbc                 = xyz',
+        'cutoff-scheme       = Verlet',
+        'vdwtype             = cutoff',
+        'vdw-modifier        = None',
+        'rlist               = 1.0',
+        'rvdw                = 1.0',
+        'rvdw-switch         = 1.0',
+        'coulombtype         = PME',
+        'rcoulomb            = 1.0',
+        'DispCorr            = EnerPres'
+    ])
+
+    return orm.SinglefileData.from_string(template, filename='minim.mdp')
+
+@calcfunction
+def generate_veloxchem_input(basis_set: orm.Str) -> orm.SinglefileData:
+    """Generate a basic VeloxChem input file."""
+    template = '\n'.join([
+        'import sys',
+        'import veloxchem as vlx',
+        'infile = sys.argv[1]',
+        'molecule = vlx.Molecule.read_xyz(infile)',
+        'mol_xyz = molecule.get_xyz_string()',
+        # 'basis = vlx.MolecularBasis.read(molecule, "6-31G*")',
+        f'basis = vlx.MolecularBasis.read(molecule, "{basis_set.value}")',
+        'resp_drv = vlx.RespChargesDriver()',
+        'resp_charges = resp_drv.compute(molecule, basis, "resp")',
+    ])
+
+    return orm.SinglefileData.from_string(template, filename='aiida_vlx.py')

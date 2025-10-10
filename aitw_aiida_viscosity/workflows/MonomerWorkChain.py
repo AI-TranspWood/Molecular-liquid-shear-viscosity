@@ -1,15 +1,11 @@
 """Implementation of the WorkChain for AITW viscosity calculation."""
 from glob import glob
 import os
-import re
-from tempfile import NamedTemporaryFile
 
 from aiida import orm
 from aiida.engine import ToContext, WorkChain
 from aiida.orm import load_node
 from aiida_shell import launch_shell_job
-from rdkit import Chem
-from rdkit.Chem import rdMolDescriptors
 
 from . import functions as fnc
 from .NemdParallelWorkChain import NemdParallelWorkChain
@@ -29,6 +25,10 @@ class MonomerWorkChain(WorkChain):
         # INPUTS ############################################################################
         spec.input('smiles_string', valid_type=orm.Str, help='The SMILES string of the molecule to simulate.')
         spec.input(
+            'reference_temperature', valid_type=orm.Float,
+            help='The reference temperature in Kelvin for the simulation.'
+        )
+        spec.input(
             'force_field', valid_type=orm.Str,
             default=lambda: orm.Str('gaff2'),
             help='The SMILES string of the molecule to simulate.'
@@ -37,6 +37,20 @@ class MonomerWorkChain(WorkChain):
             'nmols', valid_type=orm.Int,
             default=lambda: orm.Int(1000),
             help='The number of molecules to insert into the simulation box.'
+        )
+
+        spec.input(
+            'veloxchem_basis', valid_type=orm.Str,
+            default=lambda: orm.Str('6-31G*'),
+            help=(
+                'The basis set to use in the VeloxChem calculation. This should be 6-31G* for RESP partial charges '
+                'with the GAFF and GAFF2 force fields.'
+            )
+        )
+        spec.input(
+            'gromacs_minimization_steps', valid_type=orm.Int,
+            default=lambda: orm.Int(5000),
+            help='The number of steps to use in the GROMACS minimization.'
         )
         # spec.input('computer_label', valid_type=orm.Str, help='The computer to run the workflow on.')
         spec.input('acpype_code', valid_type=orm.AbstractCode, help='Code for running the `acpype` program.')
@@ -54,22 +68,32 @@ class MonomerWorkChain(WorkChain):
         spec.outline(
             cls.setup,
             cls.submit_acpype,
+            cls.submit_obabel,
+            cls.make_veloxchem_input,
             cls.submit_veloxchem,
             cls.run_resp_injection,
             cls.update_top_file,
             cls.get_box_size,
             cls.build_gro,
-            cls.submit_minimization,
-            cls.submit_equilibration,
-            cls.set_nemd_inputs,
-            cls.submit_parallel_nemd,
-            cls.collect_outputs,
-            cls.submit_postprocessing,
-            cls.finalize
+            cls.make_gromacs_minimization_input,
+            cls.submit_minimization_init,
+            cls.submit_minimization_run,
+            # cls.submit_equilibration,
+            # cls.set_nemd_inputs,
+            # cls.submit_parallel_nemd,
+            # cls.collect_outputs,
+            # cls.submit_postprocessing,
+            # cls.finalize
         )
 
         # OUTPUTS ############################################################################
         spec.outputs.dynamic = True
+
+        # ERRORS ############################################################################
+        spec.exit_code(
+            300, 'ERROR_ACPYPE_MISSING_OUTPUT',
+            message='ACPYPE did not produce all expected output files.'
+        )
 
     def setup(self):
         """Setup context variables."""
@@ -78,9 +102,10 @@ class MonomerWorkChain(WorkChain):
         self.ctx.nmols = self.inputs.nmols.value
 
     def submit_acpype(self):
-        self.report('Submitting the aiida-shell subprocess ')
+        """Submit acpype and obabel calculations to generate initial structure and parameters."""
         basename = 'aiida'
-        # code=load_code('acpype@Tohtori')
+
+        self.report('Running acpype through aiida-shell...')
         results_acpype, node_acpype = launch_shell_job(
             self.inputs.acpype_code,
             arguments=f'-i {{smiles}} -n 0 -c bcc -q sqm -b {basename} -a {{ff}} -s 108000',
@@ -95,12 +120,8 @@ class MonomerWorkChain(WorkChain):
             },
             outputs=[f'{basename}.acpype']
         )
-
-        self.report('...in acpype...')
-        self.report(f'Calculation terminated: {node_acpype.process_state}')
-        self.report('Outputs:')
-        self.report(results_acpype.keys())
-        self.report(results_acpype)
+        self.report(f'Submitted job: {node_acpype}')
+        self.report(f'Outputs: {results_acpype}')
 
         # Expected filename patterns
         target_suffixes = {
@@ -110,35 +131,28 @@ class MonomerWorkChain(WorkChain):
             'pdb': 'NEW.pdb',
         }
 
-        # Initialize ctx fields
-        self.ctx.gro = None
-        self.ctx.itp = None
-        self.ctx.top = None
-        self.ctx.pdb = None
+        # TODO: probably should use a CalcFunction here to extract and store these files
+        missing = set(target_suffixes.keys())
+        out_node: orm.FolderData = results_acpype[f'{basename}_acpype']
+        for file_obj in out_node.list_objects():
+            filename = file_obj.name
+            for key in missing.copy():
+                suffix = target_suffixes[key]
+                if filename.endswith(suffix):
+                    setattr(self.ctx, key, wrap_file(out_node, filename))
+                    missing.remove(key)
+                    break
+        if missing:
+            self.report(f'Missing expected output files from ACPYPE: {missing}')
+            return self.exit_codes.ERROR_ACPYPE_MISSING_OUTPUT
 
-        for key, node in results_acpype.items():
-            # self.report(f'{key}: {node.__class__.__name__}<{node.pk}>')
-            if isinstance(node, orm.FolderData):
-                for filename in node.list_object_names():
-                    # Match based on suffix
-                    if filename.endswith(target_suffixes['gro']):
-                        self.ctx.gro = wrap_file(node, filename)
-                    elif filename.endswith(target_suffixes['itp']):
-                        self.ctx.itp = wrap_file(node, filename)
-                    elif filename.endswith(target_suffixes['top']):
-                        self.ctx.top = wrap_file(node, filename)
-                    elif filename.endswith(target_suffixes['pdb']):
-                        self.ctx.pdb = wrap_file(node, filename)
-
-        # Optionally verify what was found
-        self.report(f"GRO: {self.ctx.gro.filename if self.ctx.gro else 'Not found'}")
-        self.report(f"ITP: {self.ctx.itp.filename if self.ctx.itp else 'Not found'}")
-        self.report(f"TOP: {self.ctx.top.filename if self.ctx.top else 'Not found'}")
-        self.report(f"PDB: {self.ctx.pdb.filename if self.ctx.pdb else 'Not found'}")
-
+    def submit_obabel(self):
+        """Convert PDB file to XYZ using Open Babel."""
+        self.report('Running obabel through aiida-shell...')
+        out_filename = 'mol.xyz'
         results_obabel, node_obabel = launch_shell_job(
             self.inputs.obabel_code,
-            arguments = '{pdbfile} -O mol.xyz',
+            arguments = f'{{pdbfile}} -O {out_filename}',
             nodes={
                 'pdbfile': self.ctx.pdb
             },
@@ -148,42 +162,27 @@ class MonomerWorkChain(WorkChain):
                     'redirect_stderr': True,
                 }
             },
-            outputs=['mol.xyz']
+            outputs=[out_filename]
         )
 
-        self.report('...in obabel...')
-        self.report(f'Calculation terminated: {node_acpype.process_state}')
-        self.report('Outputs:')
-        self.report(results_obabel)
+        self.report(f'Submitted job: {node_obabel}')
+        self.report(f'Outputs: {results_obabel.keys()}')
 
-        self.ctx.xyz = results_obabel['mol_xyz']
+        self.ctx.xyz = results_obabel[out_filename.replace('.', '_')]
+
+    def make_veloxchem_input(self):
+        """Prepare input files for VeloxChem calculation."""
+        self.ctx.veloxchem_input = fnc.generate_veloxchem_input(self.inputs.veloxchem_basis)
 
     def submit_veloxchem(self):
-        self.report('Submitting the aiida-shell subprocess ')
-        xyzfile = self.ctx.xyz
-        # xyzfile = orm.SinglefileData(file=os.path.join(os.getcwd(), 'mol.xyz')) # This for test purposes
-
-        # TODO: this is creating a new node it should be done in a calcfunction also probably generalizing the inputs
-        # EG is 6-31G* what should always beb used? Should this be user settable?
-        script_content = '\n'.join([
-            'import sys',
-            'import veloxchem as vlx',
-            'infile = sys.argv[1]',
-            'molecule = vlx.Molecule.read_xyz(infile)',
-            'mol_xyz = molecule.get_xyz_string()',
-            'basis = vlx.MolecularBasis.read(molecule, "6-31G*")',
-            'resp_drv = vlx.RespChargesDriver()',
-            'resp_charges = resp_drv.compute(molecule, basis, "resp")',
-        ])
-        script_file = orm.SinglefileData.from_string(script_content, filename='resp.py').store()
-
-        # Inputs to launch_shell_job
+        """Submit a VeloxChem calculation to compute RESP charges and store the resulting PDB file"""
+        self.report('Running veloxchem through aiida-shell...')
         results_veloxchem, node_veloxchem = launch_shell_job(
             self.inputs.veloxchem_code,
             arguments = '{script_file} {xyzfile}',
             nodes={
-                'script_file': script_file,
-                'xyzfile': xyzfile
+                'script_file': self.ctx.veloxchem_input,
+                'xyzfile': self.ctx.xyz
             },
             metadata = {
                 'options': {
@@ -192,9 +191,8 @@ class MonomerWorkChain(WorkChain):
             },
         )
 
-        self.report('...in veloxchem...')
-        self.report('Outputs:')
-        self.report(results_veloxchem.keys())
+        self.report(f'Submitted job: {node_veloxchem}')
+        self.report(f'Outputs: {results_veloxchem}')
 
         self.ctx.pdb = results_veloxchem['stdout']
 
@@ -208,7 +206,7 @@ class MonomerWorkChain(WorkChain):
             itp_file=self.ctx.itp
         )
 
-        self.report(f'Updated ITP file with RESP charges stored as node <{self.ctx.itp_with_resp.pk}>')
+        self.report(f'Updated ITP file with RESP charges stored as node {self.ctx.itp_with_resp}')
 
     def update_top_file(self):
         """Update the .top file to reference the new .itp file and correct molecule count."""
@@ -218,7 +216,7 @@ class MonomerWorkChain(WorkChain):
             itp_file=self.ctx.itp_with_resp,
         )
 
-        self.report(f"Updated .top file stored: {self.ctx.top_updated.filename} (pk={self.ctx.top_updated.pk})")
+        self.report(f"Updated .top file stored: {self.ctx.top_updated.filename} {self.ctx.top_updated}")
 
     def get_box_size(self):
         """Approximate molar mass from SMILES string using RDKit and store as AiiDA Float node."""
@@ -230,94 +228,85 @@ class MonomerWorkChain(WorkChain):
         self.report(f"Calculated box edge length: {self.ctx.box_size.value:.2f} nm")
 
     def build_gro(self):
-        self.report('Building system... ')
-        grofile = self.ctx.gro
-        nmols = orm.Int(self.ctx.nmols)
-        box_vector = self.ctx.box_size
-
+        self.report(f'Running GROMACS insert-molecules to create a box of {self.inputs.nmols.value} molecules... ')
+        filename = 'system.gro'
         results_insert, node_insert = launch_shell_job(
             self.inputs.gmx_code,
             arguments=(
-                'insert-molecules -ci {grofile} -o system.gro -nmol {nmols} '
+                f'insert-molecules -ci {{grofile}} -o {filename} -nmol {{nmols}} ' +
                 '-try 1000 -box {box_vector} {box_vector} {box_vector}'
             ),
             nodes={
-                'grofile': grofile,
-                'nmols': nmols,
-                'box_vector': box_vector
+                'grofile': self.ctx.gro,
+                'nmols': self.inputs.nmols,
+                'box_vector': self.ctx.box_size
             },
             metadata={
                 'options': {
                     'withmpi': False,
                 }
             },
-            outputs=['system.gro']
+            outputs=[filename]
         )
+        self.report(f'Submitted job: {node_insert}')
+        self.report(f'Outputs: {results_insert}')
 
-        nodelist=[]
-        for key, node in results_insert.items():
-            nodelist.append(int({node.pk}.pop()))
-        self.ctx.system_gro = load_node(nodelist[0])
+        self.ctx.system_gro = results_insert[filename.replace('.', '_')]
 
-    def submit_minimization(self):
-        print('Running grompp... ')
-        grofile = self.ctx.system_gro
-        topfile = self.ctx.top_updated
-        itpfile = self.ctx.itp_with_resp
-        mdpfile = orm.SinglefileData(file=os.path.join(os.getcwd(), 'minimize.mdp'))
+    def make_gromacs_minimization_input(self):
+        """Generate a basic GROMACS minimization input file."""
+        self.ctx.minimize_mdp = fnc.generate_gromacs_minimization_input(
+            minimization_steps=self.inputs.gromacs_minimization_steps
+        )
+        # self.report(f'Generated minimization.mdp file: {self.ctx.minimize_mdp}')
 
-        # code = load_code('gromacs2024@Tohtori')
+    def submit_minimization_init(self):
+        self.report('Running GROMACS minimization initialization...')
         results_grompp, node_grompp = launch_shell_job(
             self.inputs.gmx_code,
             arguments='grompp -f {mdpfile} -c {grofile} -r {grofile} -p {topfile} -o minimize.tpr',
             nodes={
-                'mdpfile': mdpfile,
-                'grofile': grofile,
-                'topfile': topfile,
-                'itpfile': itpfile
+                'mdpfile': self.ctx.minimize_mdp,
+                'grofile': self.ctx.system_gro,
+                'topfile': self.ctx.top_updated,
+                'itpfile': self.ctx.itp_with_resp
             },
             metadata={
                 'options': {
                     'withmpi': False,
+                    'redirect_stderr': True,
                 }
             },
-            outputs=['mdout.mdp','minimize.tpr']
+            outputs=['mdout.mdp', 'minimize.tpr']
         )
 
-        self.report('...in grompp...')
-        self.report(f'Calculation terminated: {node_grompp.process_state}')
+        self.report(f'Submitted job: {node_grompp}')
+        self.report(f'Outputs: {results_grompp}')
 
-        nodelist=[]
-        for key, node in results_grompp.items():
-            nodelist.append(node.pk)
-        self.ctx.tpr = load_node(nodelist[1])
+        self.ctx.tpr = results_grompp['minimize_tpr']
 
-        # gromacs command
+    def submit_minimization_run(self):
+        self.report('Running GROMACS minimization mdrun...')
         # gmx_mpi mdrun -v -deffnm minimize
-        self.report('Running mdrun... ')
-        tprfile = self.ctx.tpr
-
         results_mdrun, node_mdrun = launch_shell_job(
             self.inputs.gmx_code,
             arguments='mdrun -v -s {tprfile} -deffnm minimize',
             nodes={
-                'tprfile': tprfile
+                'tprfile': self.ctx.tpr
             },
             metadata={
                 'options': {
                     'withmpi': True,
+                    'redirect_stderr': True,
                 }
             },
             outputs=['minimize.gro']
         )
 
-        self.report('...in mdrun...')
-        self.report(f'Calculation terminated: {node_mdrun.process_state}')
+        self.report(f'Submitted job: {node_mdrun}')
+        self.report(f'Outputs: {results_mdrun}')
 
-        nodelist=[]
-        for key, node in results_mdrun.items():
-            nodelist.append(node.pk)
-        self.ctx.minimized_gro = load_node(nodelist[0])
+        self.ctx.minimized_gro = results_mdrun['minimize_gro']
 
     def submit_equilibration(self):
         self.report('Running grompp... ')

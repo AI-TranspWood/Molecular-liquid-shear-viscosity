@@ -32,6 +32,38 @@ SMILES_STRING = OverridableOption(
     help='The SMILE code representation of the molecule to simulate.'
 )
 
+FORCE_FIELD = OverridableOption(
+    '-f',
+    '--force-field',
+    'force_field',
+    type=click.Choice(['gaff', 'amber', 'gaff2', 'amber2']),
+    help='The force field to use for the simulation.'
+)
+
+REFERENCE_TEMPERATURE = OverridableOption(
+    '-T',
+    '--temperature',
+    'reference_temperature',
+    type=click.FLOAT,
+    help='The reference temperature in Kelvin for the simulation.'
+)
+
+NMOLS = OverridableOption(
+    '-N',
+    '--num-molecules',
+    'nmols',
+    type=click.INT,
+    help='The number of molecules to include in the simulation box.'
+)
+
+NUM_STEPS = OverridableOption(
+    '-n',
+    '--num-steps',
+    'num_steps',
+    type=click.INT,
+    help='The number of MD steps to perform in the production run.'
+)
+
 MAX_NUM_MACHINES = OverridableOption(
     '-m',
     '--max-num-machines',
