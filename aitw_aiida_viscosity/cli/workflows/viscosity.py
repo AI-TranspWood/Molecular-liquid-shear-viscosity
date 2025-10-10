@@ -11,6 +11,7 @@ from ..utils import defaults, launch, options, validate
 
 @cmd_launch.command('viscosity')
 # Required options
+@options.NUM_STEPS(required=True)
 @options.SMILES_STRING(required=True)
 @options.REFERENCE_TEMPERATURE(required=True)
 # Codes
@@ -21,6 +22,7 @@ from ..utils import defaults, launch, options, validate
 # Optional parameters,
 @options.FORCE_FIELD(required=False)
 @options.NMOLS(required=False)
+@options.TIME_STEP(required=False)
 @options.CLEAN_WORKDIR()
 # Resources
 @options.MAX_NUM_MACHINES()
@@ -30,12 +32,12 @@ from ..utils import defaults, launch, options, validate
 @decorators.with_dbenv()
 def launch_workflow(
     # Required parameters
-    smiles_string, reference_temperature,
+    num_steps, smiles_string, reference_temperature,
     # Codes
     acpype_code, obabel_code, veloxchem_code, gmx_code,
     # Optional parameters,
     clean_workdir,
-    nmols, force_field,
+    nmols, force_field, time_step,
     # Resources
     max_num_machines, max_wallclock_seconds, with_mpi, daemon
 ):
@@ -44,12 +46,15 @@ def launch_workflow(
 
     builder = WorkflowFactory('aitw.gromacs.viscosity').get_builder()
 
+    builder.num_steps = num_steps
     builder.smiles_string = smiles_string
     builder.reference_temperature = reference_temperature
     if nmols is not None:
         builder.nmols = nmols
     if force_field is not None:
         builder.force_field = force_field
+    if time_step is not None:
+        builder.time_step = time_step
 
     builder.acpype_code = acpype_code
     builder.obabel_code = obabel_code
@@ -57,5 +62,9 @@ def launch_workflow(
     builder.gmx_code = gmx_code
 
     builder.clean_workdir = clean_workdir
+
+    builder.max_num_machines = max_num_machines
+    builder.max_wallclock_seconds = max_wallclock_seconds
+    builder.with_mpi = with_mpi
 
     launch.launch_process(builder, daemon)

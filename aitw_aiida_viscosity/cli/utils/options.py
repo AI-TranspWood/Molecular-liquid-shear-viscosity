@@ -64,6 +64,14 @@ NUM_STEPS = OverridableOption(
     help='The number of MD steps to perform in the production run.'
 )
 
+TIME_STEP = OverridableOption(
+    '-t',
+    '--time-step',
+    'time_step',
+    type=click.FLOAT,
+    help='The time step (in ps) to use for the MD simulations.'
+)
+
 MAX_NUM_MACHINES = OverridableOption(
     '-m',
     '--max-num-machines',

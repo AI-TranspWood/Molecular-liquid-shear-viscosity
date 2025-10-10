@@ -145,6 +145,24 @@ def get_box_size(
     return  orm.Float(edge_length_nm)
 
 @calcfunction
+def generate_veloxchem_input(basis_set: orm.Str) -> orm.SinglefileData:
+    """Generate a basic VeloxChem input file."""
+    template = '\n'.join([
+        'import sys',
+        'import veloxchem as vlx',
+        'infile = sys.argv[1]',
+        'molecule = vlx.Molecule.read_xyz(infile)',
+        'mol_xyz = molecule.get_xyz_string()',
+        # 'basis = vlx.MolecularBasis.read(molecule, "6-31G*")',
+        f'basis = vlx.MolecularBasis.read(molecule, "{basis_set.value}")',
+        'resp_drv = vlx.RespChargesDriver()',
+        'resp_charges = resp_drv.compute(molecule, basis, "resp")',
+    ])
+
+    return orm.SinglefileData.from_string(template, filename='aiida_vlx.py')
+
+
+@calcfunction
 def generate_gromacs_minimization_input(minimization_steps: orm.Int) -> orm.SinglefileData:
     """Generate a basic GROMACS minimization input file."""
     template = '\n'.join([
@@ -172,18 +190,95 @@ def generate_gromacs_minimization_input(minimization_steps: orm.Int) -> orm.Sing
     return orm.SinglefileData.from_string(template, filename='minim.mdp')
 
 @calcfunction
-def generate_veloxchem_input(basis_set: orm.Str) -> orm.SinglefileData:
-    """Generate a basic VeloxChem input file."""
+def generate_gromacs_equilibration_input(
+        num_steps: orm.Int,
+        time_step: orm.Float,
+        reference_temperature: orm.Float,
+    ):
+    """Generate a basic GROMACS equilibration input file."""
+
     template = '\n'.join([
-        'import sys',
-        'import veloxchem as vlx',
-        'infile = sys.argv[1]',
-        'molecule = vlx.Molecule.read_xyz(infile)',
-        'mol_xyz = molecule.get_xyz_string()',
-        # 'basis = vlx.MolecularBasis.read(molecule, "6-31G*")',
-        f'basis = vlx.MolecularBasis.read(molecule, "{basis_set.value}")',
-        'resp_drv = vlx.RespChargesDriver()',
-        'resp_charges = resp_drv.compute(molecule, basis, "resp")',
+        'integrator          = md-vv',
+        f'nsteps              = {num_steps.value}',
+        f'dt                  = {time_step.value}',
+        'comm_mode           = linear',
+        'nstcomm             = 100',
+        'nstxout-compressed  = 100000',
+        'nstvout             = 0',
+        'nstlog              = 1000',
+        'nstenergy           = 10000',
+        'nstlist             = 50',
+        'ns_type             = grid',
+        'pbc                 = xyz',
+
+        'constraints         = none',
+        'cutoff-scheme       = Verlet',
+        'vdwtype             = Cut-off',
+        'vdw-modifier        = None',
+        'rlist               = 1.0',
+        'rvdw                = 1.0',
+        'rvdw-switch         = 1.0',
+        'coulombtype         = PME',
+        ';coulombtype         = Cut-off',
+        'rcoulomb            = 1.0',
+        'DispCorr            = EnerPres',
+
+        f'ref_t               = {reference_temperature.value}',
+        'Tcoupl              = v-rescale',
+        'tc-grps	            = system',
+        'tau_t               = 1.0',
+        'Pcoupl              = C-rescale',
+        ';Pcoupl              = no',
+        'Pcoupltype          = isotropic',
+        'tau_p               = 5.0',
+        'compressibility     = 4.5e-5',
+        'ref_p               = 1.0 ',
+        'refcoord_scaling    = all',
     ])
 
-    return orm.SinglefileData.from_string(template, filename='aiida_vlx.py')
+    return orm.SinglefileData.from_string(template, filename='equilibrate.mdp')
+
+@calcfunction
+def generate_gromacs_shear_rate_input(
+        nsteps: orm.Int,
+        time_step: orm.Float,
+        ref_t: orm.Float,
+        shear_rate: orm.Float,
+    ):
+    """Generate a basic GROMACS shear rate input file."""
+    template = '\n'.join([
+        'integrator          = md',
+        f'nsteps              = {nsteps.value}',
+        f'dt                  = {time_step.value}',
+        'nstxout-compressed  = 3000000',
+        'nstvout             = 0',
+        'nstlog              = 1000',
+        'nstenergy           = 50',
+        'nstcalcenergy       = 5',
+        'nstlist             = 50',
+        'ns_type             = grid',
+        'pbc                 = xyz',
+
+        'constraints         = none',
+        'cutoff-scheme       = Verlet',
+        'vdwtype             = Cut-off',
+        'vdw-modifier        = None',
+        'rlist               = 1.0',
+        'rvdw                = 1.0',
+        'rvdw-switch         = 1.0',
+        'coulombtype         = PME',
+        ';coulombtype         = Cut-off',
+        'rcoulomb            = 1.0',
+        'DispCorr            = EnerPres',
+
+        f'ref_t               = {ref_t.value}',
+        'Tcoupl              = v-rescale',
+        'tc-grps             = system',
+        'tau_t               = 1.0',
+        'Pcoupl              = no',
+
+        f'deform              = 0.0 0.0 0.0 {shear_rate.value} 0.0 0.0',
+        'deform-init-flow    = yes',
+    ])
+
+    return orm.SinglefileData.from_string(template, filename='aiida.mdp')
