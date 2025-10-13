@@ -7,6 +7,8 @@ from aiida.engine import ToContext, WorkChain, append_, if_, while_
 from aiida.orm import load_node
 from aiida.plugins import SchedulerFactory
 from aiida_shell import launch_shell_job
+import numpy as np
+from tomlkit import key
 
 from . import functions as fnc
 from .NemdParallelWorkChain import NemdParallelWorkChain
@@ -116,6 +118,7 @@ class MonomerWorkChain(WorkChain):
             cls.make_gromacs_equilibration_input,
             cls.submit_equilibration_init,
             cls.submit_equilibration_run,
+            cls.collect_equilibrated_box_length,
             # cls.make_gromacs_nemd_inputs,
             cls.submit_nemd_init,
             if_(cls.should_do_alltogheter)(
@@ -128,8 +131,15 @@ class MonomerWorkChain(WorkChain):
             # cls.should_do_alltogheter,
             # cls.set_nemd_inputs,
             # cls.submit_parallel_nemd,
-            cls.collect_outputs,
+            cls.collect_nemd_outputs,
+
             # cls.submit_postprocessing,
+            cls.run_gmx_energy_all,
+            cls.collect_energy_outputs,
+
+            cls.collect_pressure_averages,
+            cls.compute_viscosities,
+
             # cls.finalize
         )
 
@@ -144,6 +154,10 @@ class MonomerWorkChain(WorkChain):
         spec.exit_code(
             370, 'ERROR_SUB_PROCESS_FAILED_GMX_NEMD',
             message='A GROMACS NEMD subprocess calculation failed.'
+        )
+        spec.exit_code(
+            375, 'ERROR_SUB_PROCESS_FAILED_GMX_ENERGY',
+            message='A GROMACS energy subprocess calculation failed.'
         )
 
     def setup(self):
@@ -430,10 +444,10 @@ class MonomerWorkChain(WorkChain):
     def submit_nemd_init(self):
         self.report('Running GROMACS NEMD initialization for each shear rate...')
         fname = 'aiida.tpr'
-        self.ctx.str_shear_rates = []
+        self.ctx.str_shear_rates = {}
         for shear_rate in self.inputs.shear_rates:
             str_srate = str(shear_rate).replace('.', '_').replace('-', 'm')
-            self.ctx.str_shear_rates.append(str_srate)
+            self.ctx.str_shear_rates[shear_rate] = str_srate
             mdp_file = fnc.generate_gromacs_shear_rate_input(
                 nsteps=self.inputs.num_steps,
                 time_step=self.inputs.time_step,
@@ -456,10 +470,9 @@ class MonomerWorkChain(WorkChain):
             self.report(f'Submitted job for shear rate {shear_rate}: {node}')
             self.to_context(**{f'grompp_{str_srate}': node})
 
-    def should_do_alltogheter(self):
+    def should_do_alltogheter(self) -> bool:
         """Check if all shear rates can be in parallel runs."""
         sched = self.ctx.gmx_scheduler
-        self.report(f'Current context: {self.ctx}')
         if isinstance(sched, DIRECT_SCHEDULER):
             self.report('Direct scheduler does not support running multiple jobs.')
             self.ctx.nemd_serial_cnt = 0
@@ -470,7 +483,7 @@ class MonomerWorkChain(WorkChain):
         """Submit the parallel NEMD WorkChain."""
         self.report('Submitting GROMACS NEMD runs as parallel jobs...')
         basename = 'aiida'
-        for str_srate in self.ctx.str_shear_rates:
+        for str_srate in self.ctx.str_shear_rates.values():
             tpr_calc = self.ctx[f'grompp_{str_srate}']
             tpr_file = tpr_calc.outputs['aiida_tpr']
 
@@ -488,13 +501,14 @@ class MonomerWorkChain(WorkChain):
             self.report(f'Submitted job: {node}')
             self.to_context(**{f'nemd_{str_srate}': node})
 
-    def do_nemd_serial(self):
+    def do_nemd_serial(self) -> bool:
         """Check if there are remaining shear rates to run in serial."""
         return self.ctx.nemd_serial_cnt < len(self.inputs.shear_rates)
 
     def submit_nemd_run_serial(self):
         """Submit the serial NEMD WorkChain."""
-        str_srate = self.ctx.str_shear_rates[self.ctx.nemd_serial_cnt]
+        srate = self.inputs.shear_rates[self.ctx.nemd_serial_cnt]
+        str_srate = self.ctx.str_shear_rates[srate]
         self.ctx.nemd_serial_cnt += 1
 
         basename = 'aiida'
@@ -517,36 +531,93 @@ class MonomerWorkChain(WorkChain):
 
         return ToContext(**{f'nemd_{str_srate}': node})
 
-    def collect_outputs(self):
+    def collect_nemd_outputs(self):
         """Collect .edr files from the NEMD parallel run."""
         self.report('Collecting .edr files from NEMD runs...')
 
-        calc_map = {str_srate: self.ctx[f'nemd_{str_srate}' ] for str_srate in self.ctx.str_shear_rates}
+        calc_map = {str_srate: self.ctx[f'nemd_{str_srate}' ] for str_srate in self.ctx.str_shear_rates.values()}
 
         failed = [str_srate for str_srate, calc in calc_map.items() if not calc.is_finished_ok]
         if failed:
             self.report(f'NEMD runs for shear rates {failed} did not finish successfully.')
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_NEMD
 
-        self.ctx.edr_outputs = []
-        for str_srate, calc in calc_map.items():
+        self.ctx.edr_outputs = {}
+        for srate, str_srate in self.ctx.str_shear_rates.items():
+            calc = calc_map[str_srate]
             edr_file = calc.outputs['aiida_edr']
-            self.ctx.edr_outputs.append(edr_file)
+            self.ctx.edr_outputs[srate] = edr_file
             self.report(f'Collected .edr file for shear rate {str_srate}: {edr_file.filename}')
             self.out(f'edr_output_{str_srate}', edr_file)
 
-    # def submit_postprocessing(self):
-    #     edr_inputs = {f'edr_{i}': node for i, node in enumerate(self.ctx.edr_outputs)}
-    #     future = self.submit(
-    #         PostprocessPressureWorkChain,
-    #         edr_files=edr_inputs,
-    #         grofile=self.ctx.equilibrated_gro,
-    #         mdp_files=self.ctx.mdp_files
-    #     )
-    #     return ToContext(postprocess=future)
+    def run_gmx_energy_all(self):
+        """Run `gmx energy` to extract pressure data from each EDR file."""
+        basename = 'aiida'
+        self.ctx.pressure_xvg = {}
 
-    # def finalize(self):
-    #     """Expose outputs from postprocessing."""
-    #     for key in self.ctx.postprocess.outputs:
-    #         value = self.ctx.postprocess.outputs[key]
-    #         self.out(key, value)
+        for srate, edr_file in self.ctx.edr_outputs.items():
+            str_srate = self.ctx.str_shear_rates[srate]
+            _, node = launch_shell_job(
+                self.inputs.gmx_code,
+                arguments=f'energy -f {{edr}} -o {basename}.xvg',
+                nodes={
+                    'edr': edr_file,
+                    'stdin': orm.SinglefileData.from_string('38\n0\n'),  # Select term 38, confirm with 0
+                },
+                outputs=[f'{basename}.xvg'],
+                metadata={
+                    'options': {
+                        'resources': {'num_machines': 1},
+                        'withmpi': False,
+                        'redirect_stderr': True,
+                        'filename_stdin': 'stdin'
+                    }
+                },
+                submit=True
+            )
+
+            self.report(f'Submitted job: {node}')
+            self.to_context(**{f'energy_{str_srate}': node})
+
+    def collect_energy_outputs(self):
+        """Collect .xvg files from the energy extraction runs."""
+        calc_map = {str_srate: self.ctx[f'energy_{str_srate}'] for str_srate in self.ctx.str_shear_rates.values()}
+
+        failed = [str_srate for str_srate, calc in calc_map.items() if not calc.is_finished_ok]
+        if failed:
+            self.report(f'Energy extraction runs for shear rates {failed} did not finish successfully.')
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_ENERGY
+
+        self.ctx.pressure_xvg = {}
+        for srate, str_srate in self.ctx.str_shear_rates.items():
+            calc = calc_map[str_srate]
+            xvg_file = calc.outputs['aiida_xvg']
+            self.ctx.pressure_xvg[srate] = xvg_file
+
+    def collect_equilibrated_box_length(self):
+        """Extract box length from the equilibrated .gro file."""
+        box_length_nm = fnc.extract_box_length(self.ctx.equilibrated_gro)
+        self.report(f"Box length extracted: {box_length_nm.value} nm")
+        self.ctx.box_length_nm = box_length_nm
+        self.out('equilibrated_box_length_nm', box_length_nm)
+
+    def collect_pressure_averages(self):
+        """Collect average pressures from the postprocessing workchain."""
+        pressures = []
+        for srate in self.inputs.shear_rates:
+            xvg_file = self.ctx.pressure_xvg[srate]
+            avg_pressure = fnc.extract_pressure_from_xvg(xvg_file)
+            pressures.append(avg_pressure.value)
+            self.report(f"Average pressure for shear rate {srate}: {avg_pressure.value} bar")
+
+        self.ctx.pressures = orm.List(list=pressures).store()
+
+    def compute_viscosities(self):
+        """Compute average pressures, shear rates, and viscosities."""
+        array = fnc.compute_viscosities(
+            deformation_velocities=self.inputs.shear_rates,
+            pressures=self.ctx.pressures,
+            box_length=self.ctx.box_length_nm
+        )
+
+        self.out('viscosity_data', array)

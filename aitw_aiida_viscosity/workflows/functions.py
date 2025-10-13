@@ -3,6 +3,7 @@ import re
 
 from aiida import orm
 from aiida.engine import calcfunction
+import numpy as np
 from rdkit import Chem
 from rdkit.Chem import rdMolDescriptors
 
@@ -282,3 +283,63 @@ def generate_gromacs_shear_rate_input(
     ])
 
     return orm.SinglefileData.from_string(template, filename='aiida.mdp')
+
+@calcfunction
+def extract_deformation_velocities(mdp_files):
+    """Extract deformation velocities from MDP files."""
+    velocities = []
+    for file_path in mdp_files.get_list():
+        with open(file_path, 'r') as f:
+            lines = f.readlines()
+            content = ''.join(lines)
+            match = re.search(r'deform\s*=\s*([-\d.eE+]+\s+[-\d.eE+]+\s+[-\d.eE+]+\s+[-\d.eE+]+)', content)
+            if not match:
+                raise ValueError(f"No 'deform' line found in {file_path}!")
+            numbers = [float(x) for x in match.group(1).split()]
+            deform_velocity = numbers[3]  # 4th number (z direction)
+            velocities.append(deform_velocity)  # fourth line
+    return orm.List(list=velocities)
+
+@calcfunction
+def extract_box_length(grofile: orm.SinglefileData) -> orm.Float:
+    """Extract the box length from a .gro file."""
+    content = grofile.get_content()
+    _, last_line = content.rstrip().rsplit('\n', 1)
+    box_length_x = float(list(filter(None, last_line.split()))[0])
+    return orm.Float(box_length_x)
+
+@calcfunction
+def extract_pressure_from_xvg(xvg_file: orm.SinglefileData) -> orm.List:
+    """Extract pressure values from a GROMACS .xvg file."""
+    with xvg_file.open() as file_handle:
+        data = np.loadtxt(file_handle, comments=['@', '#'])
+    avg_pressure = -np.mean(data[:, 1])  # Convert to a positive value
+    return orm.Float(avg_pressure)
+
+@calcfunction
+def compute_viscosities(
+        deformation_velocities: orm.List,
+        pressures: orm.List,
+        box_length: orm.Float,
+    ) -> orm.ArrayData:
+    """Compute shear rates from deformation velocities and box length."""
+    box_length_nm = box_length.value
+
+    shear_rates = []
+    viscosities = []
+
+    for deform_vel_nm_per_ps, pressure_bar in zip(deformation_velocities.get_list(), pressures.get_list()):
+        shear_rate = (deform_vel_nm_per_ps * 1000) / (box_length_nm * 1e-9)  # [1/s]
+        pressure_Pa = pressure_bar * 1e5  # [Pa]
+        viscosity_Pa_s = pressure_Pa / shear_rate  # [Pa.s]
+        viscosity_mPa_s = viscosity_Pa_s * 1000  # [mPa.s]
+
+        shear_rates.append(shear_rate)
+        viscosities.append(viscosity_mPa_s)
+
+    array = orm.ArrayData()
+    array.set_array('pressure_averages', np.array(pressures.get_list()))
+    array.set_array('shear_rates', np.array(shear_rates))
+    array.set_array('viscosities', np.array(viscosities))
+
+    return array
