@@ -612,14 +612,14 @@ class MonomerWorkChain(WorkChain):
         self.report('Running GROMACS NEMD initialization for each shear rate...')
         fname = 'aiida.tpr'
         self.ctx.str_shear_rates = {}
-        for shear_rate in self.inputs.shear_rates:
-            str_srate = str(shear_rate).replace('.', '_').replace('-', 'm')
-            self.ctx.str_shear_rates[shear_rate] = str_srate
+        for srate in self.inputs.shear_rates:
+            str_srate = fnc.string_safe_float(srate)
+            self.ctx.str_shear_rates[srate] = str_srate
             mdp_file = fnc.generate_gromacs_shear_rate_input(
                 nsteps=self.inputs.num_steps,
                 time_step=self.inputs.time_step,
                 ref_t=self.inputs.reference_temperature,
-                shear_rate=orm.Float(shear_rate)
+                shear_rate=orm.Float(srate)
             )
             _, node = launch_shell_job(
                 'gmx_mpi',
@@ -634,7 +634,7 @@ class MonomerWorkChain(WorkChain):
                 outputs=[fname],
                 submit=True
             )
-            self.report(f'Submitted job for shear rate {shear_rate}: {node}')
+            self.report(f'Submitted job for shear rate {srate}: {node}')
             self.to_context(**{f'grompp_{str_srate}': node})
 
     def should_do_alltogheter(self) -> bool:
@@ -784,14 +784,16 @@ class MonomerWorkChain(WorkChain):
 
     def collect_pressure_averages(self):
         """Collect average pressures from the postprocessing workchain."""
-        pressures = []
+        pressures = {}
         for srate in self.inputs.shear_rates:
+            str_srate = self.ctx.str_shear_rates[srate]
             xvg_file = self.ctx.pressure_xvg[srate]
             avg_pressure = fnc.extract_pressure_from_xvg(xvg_file)
-            pressures.append(avg_pressure.value)
+            # pressures.append(avg_pressure.value)
+            pressures[f'pressure_{str_srate}'] = avg_pressure
             self.report(f"Average pressure for shear rate {srate}: {avg_pressure.value} bar")
 
-        self.ctx.pressures = orm.List(list=pressures).store()  # TODO: bind using a calcfunction for provenance
+        self.ctx.pressures = fnc.join_pressure_results(self.inputs.shear_rates, **pressures)
 
     def compute_viscosities(self):
         """Compute average pressures, shear rates, and viscosities."""

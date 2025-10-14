@@ -8,6 +8,10 @@ from rdkit import Chem
 from rdkit.Chem import rdMolDescriptors
 
 
+def string_safe_float(value: float) -> str:
+    """Convert a float to an aiida-context safe string"""
+    return str(value).replace('.', '_').replace('-', 'm')
+
 @calcfunction
 def extract_files_suffix(folder: orm.FolderData, suffix: orm.Str) -> orm.SinglefileData:
     """Extract a file with a specific suffix from a FolderData node."""
@@ -327,6 +331,22 @@ def extract_pressure_from_xvg(xvg_file: orm.SinglefileData) -> orm.List:
         data = np.loadtxt(file_handle, comments=['@', '#'])
     avg_pressure = -np.mean(data[:, 1])  # Convert to a positive value
     return orm.Float(avg_pressure)
+
+@calcfunction
+def join_pressure_results(
+        shear_rates: orm.List,
+        **pressure_results,
+    ) -> orm.List:
+    """Join pressure results from multiple calculations into a single list."""
+    pressures = []
+    for srate in shear_rates:
+        str_srate = string_safe_float(srate)
+        pressure = pressure_results.get(f'pressure_{str_srate}', None)
+        if pressure is None:
+            raise ValueError(f"Missing pressure result for shear rate {srate}!")
+        pressures.append(pressure.value)
+
+    return orm.List(list=pressures)
 
 @calcfunction
 def compute_viscosities(
