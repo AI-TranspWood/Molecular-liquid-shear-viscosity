@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
 """Command line scripts to launch a `MonomerWorkChain` for testing and demonstration purposes."""
-from aiida.cmdline.params import options as options_core
-from aiida.cmdline.params import types
 from aiida.cmdline.utils import decorators
-import click
 
 from . import cmd_launch
-from ..utils import defaults, launch, options, validate
+from ..utils import launch, options
 
 
 @cmd_launch.command('viscosity')
