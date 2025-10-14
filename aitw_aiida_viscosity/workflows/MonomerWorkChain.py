@@ -86,6 +86,11 @@ class MonomerWorkChain(WorkChain):
         spec.input('obabel_code', valid_type=orm.AbstractCode, help='Code for running the `obabel` program.')
         spec.input('veloxchem_code', valid_type=orm.AbstractCode, help='Code for python with `veloxchem` installed.')
         spec.input('gmx_code', valid_type=orm.AbstractCode, help='Code for running `gmx` or `gmx_mpi`.')
+        spec.input(
+            'gmx_code_local', valid_type=orm.AbstractCode,
+            required=False,
+            help='Code for running `gmx` or `gmx_mpi` locally for initialization/serial runs.'
+        )
 
         spec.input(
             'with_mpi', valid_type=orm.Bool,
@@ -253,6 +258,15 @@ class MonomerWorkChain(WorkChain):
 
     def setup(self):
         """Setup context variables."""
+        # Use remote code if local code not provided
+        gmx_remote = self.inputs.gmx_code
+        self.report(f'Using GROMACS <{gmx_remote.pk}> for remote execution.')
+        gmx_local = self.inputs.gmx_code_local or gmx_remote
+        self.ctx.gmx_code_local = gmx_local
+        self.report(f'Using GROMACS <{gmx_local.pk}> for local execution.')
+
+        self.ctx.gmx_code_local = self.inputs.gmx_code_local or self.inputs.gmx_code
+
         self.ctx.smiles_string = self.inputs.smiles_string.value
         self.ctx.ff = self.inputs.force_field.value
         self.ctx.nmols = self.inputs.nmols.value
@@ -281,8 +295,6 @@ class MonomerWorkChain(WorkChain):
                 'redirect_stderr': True,
             }
         }
-
-        self.report(f'{self.ctx.gmx_run_metadata}')
 
         max_mem = gmx_computer.get_default_memory_per_machine()
         if max_mem is not None:
@@ -458,7 +470,7 @@ class MonomerWorkChain(WorkChain):
         self.report(f'Running GROMACS insert-molecules to create a box of {self.inputs.nmols.value} molecules... ')
         filename = f'{BASENAME}.gro'
         _, node = launch_shell_job(
-            self.inputs.gmx_code,
+            self.ctx.gmx_code_local,
             arguments=(
                 f'insert-molecules -ci {{grofile}} -o {filename} -nmol {{nmols}} ' +
                 '-try 1000 -box {box_vector} {box_vector} {box_vector}'
@@ -503,7 +515,7 @@ class MonomerWorkChain(WorkChain):
         """Initialize GROMACS minimization run to generate .tpr file."""
         self.report('Running GROMACS minimization initialization...')
         _, node = launch_shell_job(
-            self.inputs.gmx_code,
+            self.ctx.gmx_code_local,
             arguments='grompp -f {mdpfile} -c {grofile} -r {grofile} -p {topfile} -o minimize.tpr',
             nodes={
                 'mdpfile': self.ctx.minimize_mdp,
@@ -577,7 +589,7 @@ class MonomerWorkChain(WorkChain):
         self.report('Running GROMACS equilibration run INIT...')
         out_filename = 'equilibrate.tpr'
         _, node = launch_shell_job(
-            self.inputs.gmx_code,
+            self.ctx.gmx_code_local,
             arguments='grompp -f {mdpfile} -c {grofile} -r {grofile} -p {topfile} -o ' + out_filename,
             nodes={
                 'mdpfile': self.ctx.equilibrate_mdp,
@@ -651,7 +663,7 @@ class MonomerWorkChain(WorkChain):
                 shear_rate=orm.Float(srate)
             )
             _, node = launch_shell_job(
-                'gmx_mpi',
+                self.ctx.gmx_code_local,
                 arguments='grompp -f {mdpfile} -c {grofile} -r {grofile} -p {topfile} -o ' + fname,
                 nodes={
                     'mdpfile': mdp_file,
@@ -769,7 +781,7 @@ class MonomerWorkChain(WorkChain):
         for srate, edr_file in self.ctx.edr_files.items():
             str_srate = self.ctx.str_shear_rates[srate]
             _, node = launch_shell_job(
-                self.inputs.gmx_code,
+                self.ctx.gmx_code_local,
                 arguments=f'energy -f {{edr}} -o {BASENAME}.xvg',
                 nodes={
                     'edr': edr_file,

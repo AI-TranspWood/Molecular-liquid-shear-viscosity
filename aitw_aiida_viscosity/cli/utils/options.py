@@ -24,6 +24,14 @@ GMX_CODE = OverridableOption(
     help='A single code for GROMACS mdrun (e.g. gromacs@localhost).'
 )
 
+GMX_CODE_LOCAL = OverridableOption(
+    '--gromacs-local', 'gmx_code_local', type=types.CodeParamType(entry_point='core.shell'),
+    help=(
+        'A single code for local GROMACS commands (e.g. gromacs@localhost). '
+        'If not provided, the same code as for --gromacs is used.'
+    )
+)
+
 SMILES_STRING = OverridableOption(
     '-s',
     '--smiles-string',

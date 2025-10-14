@@ -19,6 +19,7 @@ from ..utils import defaults, launch, options, validate
 @options.OBABEL_CODE(required=True)
 @options.VELOXCHEM_CODE(required=True)
 @options.GMX_CODE(required=True)
+@options.GMX_CODE_LOCAL(required=False)
 # Optional parameters,
 @options.FORCE_FIELD(required=False)
 @options.NMOLS(required=False)
@@ -35,6 +36,7 @@ def launch_workflow(
     num_steps, smiles_string, reference_temperature,
     # Codes
     acpype_code, obabel_code, veloxchem_code, gmx_code,
+    gmx_code_local,
     # Optional parameters,
     clean_workdir,
     nmols, force_field, time_step,
@@ -60,6 +62,8 @@ def launch_workflow(
     builder.obabel_code = obabel_code
     builder.veloxchem_code = veloxchem_code
     builder.gmx_code = gmx_code
+    if gmx_code_local is not None:
+        builder.gmx_code_local = gmx_code_local
 
     builder.clean_workdir = clean_workdir
 
