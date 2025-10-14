@@ -137,6 +137,7 @@ class MonomerWorkChain(WorkChain):
             cls.make_gromacs_equilibration_input,
             cls.submit_equilibration_init,
             cls.submit_equilibration_run,
+            cls.inspect_equilibration,
 
             cls.extract_equilibrated_box_length,
             cls.submit_nemd_init,
@@ -150,8 +151,8 @@ class MonomerWorkChain(WorkChain):
             cls.inspect_nemd,
 
             # cls.submit_postprocessing,
-            cls.run_gmx_energy_all,
-            cls.collect_energy_outputs,
+            cls.submit_energy_parallel,
+            cls.inspect_energy,
 
             cls.collect_pressure_averages,
             cls.compute_viscosities,
@@ -169,6 +170,18 @@ class MonomerWorkChain(WorkChain):
             'viscosity_data',
             valid_type=orm.ArrayData,
             help='ArrayData containing `pressure_averages`, `shear_rates`, and `viscosities` arrays.'
+        )
+        spec.output(
+            'xyz', valid_type=orm.SinglefileData,
+            help='The XYZ file of the molecule generated from ACPYPE bi the SMILES code.'
+        )
+        spec.output(
+            'system_gro', valid_type=orm.SinglefileData,
+            help='The .gro file of the full simulation box after inserting all molecules.'
+        )
+        spec.output(
+            'equilibrated_gro', valid_type=orm.SinglefileData,
+            help='The equilibrated .gro file after minimization and equilibration.'
         )
 
         spec.output_namespace(
@@ -369,6 +382,7 @@ class MonomerWorkChain(WorkChain):
             self.report('Open Babel did not produce the expected XYZ output file.')
             return self.exit_codes.ERROR_OBELAB_MISSING_OUTPUT
         self.ctx.xyz = xyz_file
+        self.out('xyz', xyz_file)
 
     def make_veloxchem_input(self):
         """Prepare input files for VeloxChem calculation."""
@@ -477,6 +491,7 @@ class MonomerWorkChain(WorkChain):
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_MISSING_OUTPUT
 
         self.ctx.system_gro = system_gro
+        self.out('system_gro', system_gro)
 
     def make_gromacs_minimization_input(self):
         """Generate a basic GROMACS minimization input file."""
@@ -593,20 +608,34 @@ class MonomerWorkChain(WorkChain):
 
         self.report('Running GROMACS equilibration run MDRUN...')
         out_filename = 'equilibrate.gro'
-        results_mdrun, node_mdrun = launch_shell_job(
+        _, node = launch_shell_job(
             self.inputs.gmx_code,
             arguments='mdrun -v -s {tprfile} -deffnm equilibrate',
             nodes={
                 'tprfile': tpr_file
             },
             metadata=self.ctx.gmx_run_metadata,
-            outputs=[out_filename]
+            outputs=[out_filename],
+            submit=True
         )
 
-        self.report(f'Submitted job: {node_mdrun}')
-        self.report(f'Outputs: {results_mdrun}')
+        self.report(f'Submitted job: {node}')
+        return ToContext(equilibrate_calc=node)
 
-        self.ctx.equilibrated_gro = results_mdrun[out_filename.replace('.', '_')]
+    def inspect_equilibration(self):
+        """Inspect the output of the equilibration calculation."""
+        calc = self.ctx.equilibrate_calc
+        if not calc.is_finished_ok:
+            self.report('GROMACS equilibration calculation failed.')
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_EQUILIBRATION
+        try:
+            equilibrated_gro = calc.outputs['equilibrate_gro']
+        except exc.NotExistentKeyError:
+            self.report('GROMACS equilibration did not produce the expected output file.')
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_MISSING_OUTPUT
+
+        self.ctx.equilibrated_gro = equilibrated_gro
+        self.out('equilibrated_gro', equilibrated_gro)
 
     def submit_nemd_init(self):
         self.report('Running GROMACS NEMD initialization for each shear rate...')
@@ -733,7 +762,7 @@ class MonomerWorkChain(WorkChain):
         self.ctx.edr_files = edr_files
         self.out('nemd', edr_outputs)
 
-    def run_gmx_energy_all(self):
+    def submit_energy_parallel(self):
         """Run `gmx energy` to extract pressure data from each EDR file."""
         self.ctx.pressure_xvg = {}
 
@@ -761,7 +790,7 @@ class MonomerWorkChain(WorkChain):
             self.report(f'Submitted job: {node}')
             self.to_context(**{f'energy_{str_srate}': node})
 
-    def collect_energy_outputs(self):
+    def inspect_energy(self):
         """Collect .xvg files from the energy extraction runs."""
         calc_map = {srate: self.ctx[f'energy_{str_srate}'] for srate, str_srate in self.ctx.str_shear_rates.items()}
 
