@@ -10,6 +10,27 @@ from . import functions as fnc
 BASENAME = 'aiida'
 DIRECT_SCHEDULER = SchedulerFactory('core.direct')
 
+def clean_calcjob_remote(node):
+    """Clean the remote directory of a ``CalcJobNode``."""
+    cleaned = False
+    try:
+        node.outputs.remote_folder._clean()  # pylint: disable=protected-access
+        cleaned = True
+    except (IOError, OSError, KeyError):
+        pass
+    return cleaned
+
+def clean_workchain_calcs(workchain):
+    """Clean all remote directories of a workchain's descendant calculations."""
+    cleaned_calcs = []
+
+    for called_descendant in workchain.called_descendants:
+        if isinstance(called_descendant, orm.CalcJobNode):
+            if clean_calcjob_remote(called_descendant):
+                cleaned_calcs.append(called_descendant.pk)
+
+    return cleaned_calcs
+
 class MonomerWorkChain(WorkChain):
     @classmethod
     def define(cls, spec):
@@ -60,7 +81,7 @@ class MonomerWorkChain(WorkChain):
             default=lambda: orm.Int(5000),
             # default=lambda: orm.Int(500000),  # TODO: use this value after testing
         )
-        # spec.input('computer_label', valid_type=orm.Str, help='The computer to run the workflow on.')
+
         spec.input('acpype_code', valid_type=orm.AbstractCode, help='Code for running the `acpype` program.')
         spec.input('obabel_code', valid_type=orm.AbstractCode, help='Code for running the `obabel` program.')
         spec.input('veloxchem_code', valid_type=orm.AbstractCode, help='Code for python with `veloxchem` installed.')
@@ -81,7 +102,6 @@ class MonomerWorkChain(WorkChain):
             default=lambda: orm.Int(3600),
             help='The maximum wallclock time in seconds for the calculations.'
         )
-
         spec.input(
             'clean_workdir', valid_type=orm.Bool,
             default=lambda: orm.Bool(False),
@@ -708,7 +728,7 @@ class MonomerWorkChain(WorkChain):
             edr_file = calc.outputs['aiida_edr']
             edr_files[srate] = edr_file
             edr_outputs[f'edr_{str_srate}'] = edr_file
-            self.report(f'Collected .edr file for shear rate {srate}: {edr_file.filename}')
+            self.report(f'Collected .edr file for shear rate {srate}')
 
         self.ctx.edr_files = edr_files
         self.out('nemd', edr_outputs)
@@ -782,3 +802,16 @@ class MonomerWorkChain(WorkChain):
         )
 
         self.out('viscosity_data', array)
+
+    def on_terminated(self):
+        """Clean the working directories of all child calculations if `clean_workdir=True` in the inputs."""
+        super().on_terminated()
+
+        if self.inputs.clean_workdir.value is False:
+            self.report('remote folders will not be cleaned')
+            return
+
+        cleaned_calcs = clean_workchain_calcs(self.node)
+
+        if cleaned_calcs:
+            self.report(f"cleaned remote folders of calculations: {' '.join(map(str, cleaned_calcs))}")
