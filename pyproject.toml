@@ -1,0 +1,109 @@
+[build-system]
+requires = ['flit_core >=3.4,<4']
+build-backend = 'flit_core.buildapi'
+
+[project]
+name = 'AITW-aiida-viscosity'
+dynamic = ['version']
+description = 'AiiDA plugin to compute shear viscosity of molecular liquids using GROMACS'
+authors = [
+    {name = 'Vaari Jukka', email = 'Jukka.Vaari@vtt.fi'},
+    {name = 'Grassano Davide', email = 'davide.grassano@epfl.ch'}
+]
+readme = 'README.md'
+license = {file = 'LICENSE.txt'}
+classifiers = [
+    'Development Status :: 5 - Production/Stable',
+    'Framework :: AiiDA',
+    'License :: OSI Approved :: MIT License',
+    'Programming Language :: Python',
+    'Programming Language :: Python :: 3.9',
+    'Programming Language :: Python :: 3.10',
+    'Programming Language :: Python :: 3.11',
+    'Programming Language :: Python :: 3.12',
+    'Programming Language :: Python :: 3.13',
+]
+keywords = ['aiida', 'workflows']
+requires-python = '>=3.9'
+dependencies = [
+    'aiida-core>=2',
+    'aiida-shell',
+    'numpy',
+
+    'rdkit',
+    # Provided as CODE entities
+    # 'openbabel',
+    # 'acpype',
+    # 'veloxchem',
+]
+
+[project.urls]
+Home = 'https://github.com/AI-TranspWood/Molecular-liquid-shear-viscosity'
+Source = 'https://github.com/AI-TranspWood/Molecular-liquid-shear-viscosity'
+# Documentation = ''
+
+[project.optional-dependencies]
+plotting = [
+    'matplotlib',
+    'scipy',
+    'PyQt5',
+]
+pre-commit = [
+    'pre-commit',
+    'pylint',
+    'pylint-aiida~=0.1.1',
+]
+
+
+[project.scripts]
+aitw-viscosity = 'aitw_aiida_viscosity.cli:cmd_root'
+
+[project.entry-points.'aiida.calculations']
+
+[project.entry-points.'aiida.data']
+
+[project.entry-points.'aiida.parsers']
+
+[project.entry-points.'aiida.tools.calculations']
+
+[project.entry-points.'aiida.tools.data.orbitals']
+
+[project.entry-points.'aiida.workflows']
+'aitw.gromacs.viscosity' = 'aitw_aiida_viscosity.workflows:MonomerWorkChain'
+
+[tool.flit.module]
+name = 'aitw_aiida_viscosity'
+
+[tool.flit.sdist]
+exclude = [
+    'docs/',
+    'tests/',
+]
+
+[tool.flynt]
+line-length = 120
+fail-on-change = true
+
+[tool.isort]
+force_sort_within_sections = true
+include_trailing_comma = true
+line_length = 120
+multi_line_output = 3  # this configuration is compatible with yapf
+
+[tool.pylint.master]
+load-plugins = ['pylint_aiida']
+
+[tool.pylint.format]
+max-line-length = 120
+
+[tool.pylint.tool-check]
+generated-members = 'self.exit_codes.*'
+
+[tool.pylint.messages_control]
+disable = [
+]
+
+[tool.pylint.basic]
+good-names = [
+    'i', 'j', 'k',
+]
