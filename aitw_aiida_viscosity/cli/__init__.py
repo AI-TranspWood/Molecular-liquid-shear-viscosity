@@ -30,16 +30,10 @@ install(
 def cmd_root():
     """CLI for the `AITW-aiida-viscosity` plugin."""
 
-@cmd_root.command()
-def hello():
-    """Print a hello world message."""
-    click.echo('Hello, AITW-aiida-viscosity!')
-
-from .plot import plot_viscosity
+from .data import *
 from .workflows import cmd_workflow
 
 __all__ = (
     'cmd_root',
     'cmd_workflow',
-    'plot_viscosity',
 )

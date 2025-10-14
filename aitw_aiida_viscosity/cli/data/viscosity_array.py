@@ -1,17 +1,22 @@
-import io
 import sys
 
 from aiida import orm
 from aiida.cmdline.params import arguments, types
 import click
-import matplotlib.pyplot as plt
 import numpy as np
-from scipy.optimize import curve_fit
 
-from . import cmd_root
+try:
+    import matplotlib
+    import matplotlib.pyplot as plt
+    from scipy.optimize import curve_fit
+except ImportError as e:
+    print('Please install the package with [plotting] extras to use this command.')
+    sys.exit(1)
+
+from . import cmd_data
 
 
-@cmd_root.command('plot-viscosity')
+@cmd_data.command('plot-viscosity')
 @arguments.DATUM(
     'data',
     required=True,
@@ -23,9 +28,17 @@ from . import cmd_root
     default=False,
     help='Show the plot interactively.'
 )
+@click.option(
+    '-o', '--output-file',
+    type=click.Path(dir_okay=False, writable=True),
+    default='viscosity_fit.png',
+    show_default=True,
+    help='Path to save the output plot image.'
+)
 def plot_viscosity(
         data: orm.ArrayData,
-        show_plot: bool = False
+        output_file: str,
+        show_plot: bool = False,
     ):
     """Plot viscosity data and fit to the Eyring model."""
     print(data)
@@ -53,7 +66,9 @@ def plot_viscosity(
             maxfev=10000  # Increase max number of function evaluations just in case
         )
         eta_N, sigma_E = popt
-        click.echo(f"Fit successful: eta_N = {eta_N:.2f} mPa.s, sigma_E = {sigma_E:.2e} s")
+        click.echo(f"Fit successful: ")
+        for var, value in [('eta_N', eta_N), ('sigma_E', sigma_E)]:
+            click.echo(f'{var:>20s} = {value:13.6e}')
     except Exception as e:
         fit_successful = False
         click.echo(f"Curve fitting failed: {e}")
@@ -77,26 +92,23 @@ def plot_viscosity(
     ax.legend()
     ax.grid(True, which='both', linestyle='--')
 
-    # Save plot
-    # buf = io.BytesIO()
-    # fig.savefig(buf, format='png')
-    # buf.seek(0)
-
-    # plot_node = orm.SinglefileData(file=buf)
-    # plot_node.store()
-
-    # Also save a local copy to working directory
     plt.tight_layout()
-    fig.savefig('viscosity_fit.png')
-    click.echo("Plot saved locally as 'viscosity_fit.png'.")
+    fig.savefig(output_file)
+    click.echo(f"Plot saved locally as '{output_file}'.")
 
     if show_plot:
+        for backend in ['TkAgg', 'Qt5Agg']:
+            messages = []
+            try:
+                matplotlib.use(backend)
+            except Exception as e:
+                messages.append(f"Could not use matplotlib backend '{backend}': {e}")
+                continue
+            else:
+                break
+        else:
+            for msg in messages:
+                click.echo(msg)
+            click.echo('Could not set a suitable matplotlib backend to show the plot.')
+            return
         plt.show()
-
-    # # Output
-    # if fit_successful:
-    #     self.out('fit_parameters', orm.Dict(dict={'eta_mPas': eta_N, 'sigma': sigma_E}).store())
-    # else:
-    #     self.out('fit_parameters', orm.Dict(dict={'fit_successful': False}).store())
-
-    # self.out('plot', plot_node)
