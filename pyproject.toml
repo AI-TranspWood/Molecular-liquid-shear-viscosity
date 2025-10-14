@@ -28,7 +28,6 @@ requires-python = '>=3.9'
 dependencies = [
     'aiida-core>=2',
     'aiida-shell',
-    'rich_click',
     'numpy',
 
     'rdkit',

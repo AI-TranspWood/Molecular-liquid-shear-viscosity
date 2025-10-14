@@ -1,25 +1,10 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=wrong-import-position
 """Module for the command line interface."""
-import aiida
-# from aiida.cmdline.groups import VerdiCommandGroup as _VerdiCommandGroup
 from aiida.cmdline.groups import VerdiCommandGroup
 from aiida.cmdline.params import options, types
-import click as original_click
-import plumpy
-from rich.traceback import install
-import rich_click as click
+import click
 
-install(
-    width=180,
-    code_width=160,
-    show_locals=True,
-    suppress=[
-        original_click, click,
-        aiida,
-        plumpy
-    ]
-)
 
 @click.group(
     'aitw-aiida-viscosity',
