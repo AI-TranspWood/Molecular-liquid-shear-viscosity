@@ -34,8 +34,9 @@ dependencies = [
     'rich_click',
 
     'rdkit',
-    'openbabel',
-    'acpype',
+    # Provided as CODE entities
+    # 'openbabel',
+    # 'acpype',
     # 'veloxchem',
 ]
 

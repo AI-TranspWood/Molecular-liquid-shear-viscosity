@@ -9,6 +9,18 @@ from rdkit.Chem import rdMolDescriptors
 
 
 @calcfunction
+def extract_files_suffix(folder: orm.FolderData, suffix: orm.Str) -> orm.SinglefileData:
+    """Extract a file with a specific suffix from a FolderData node."""
+    suffix = suffix.value
+    for file_obj in folder.list_objects():
+        filename = file_obj.name
+        if filename.endswith(suffix):
+            with folder.open(filename, 'rb') as f:
+                out_node = orm.SinglefileData(file=f, filename=filename)
+            return out_node
+    raise ValueError(f"No file with suffix '{suffix}' found in the provided FolderData.")
+
+@calcfunction
 def run_resp_injection(
         pdb_file: orm.SinglefileData, itp_file: orm.SinglefileData
     ) -> orm.SinglefileData:

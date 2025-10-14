@@ -1,27 +1,14 @@
 """Implementation of the WorkChain for AITW viscosity calculation."""
-from glob import glob
-import os
-
 from aiida import orm
-from aiida.engine import ToContext, WorkChain, append_, if_, while_
-from aiida.orm import load_node
+from aiida.common import exceptions as exc
+from aiida.engine import ToContext, WorkChain, if_, while_
 from aiida.plugins import SchedulerFactory
 from aiida_shell import launch_shell_job
-import numpy as np
-from tomlkit import key
 
 from . import functions as fnc
-from .NemdParallelWorkChain import NemdParallelWorkChain
-from .PostprocessPressureWorkChain import PostprocessPressureWorkChain
 
+BASENAME = 'aiida'
 DIRECT_SCHEDULER = SchedulerFactory('core.direct')
-
-def wrap_file(folder, filename):
-    with folder.open(filename, 'rb') as f:
-        return orm.SinglefileData(f, filename=filename).store()
-        # return orm.SinglefileData(file=io.BytesIO(f.read()), filename=filename).store()
-
-# TODO: make all aiida_shell launch_shell_job use submit=True
 
 class MonomerWorkChain(WorkChain):
     @classmethod
@@ -104,22 +91,34 @@ class MonomerWorkChain(WorkChain):
         # OUTLINE ############################################################################
         spec.outline(
             cls.setup,
+
             cls.submit_acpype,
+            cls.inspect_acpype,
+
             cls.submit_obabel,
+            cls.inspect_obabel,
+
             cls.make_veloxchem_input,
             cls.submit_veloxchem,
+            cls.inspect_veloxchem,
+
             cls.run_resp_injection,
             cls.update_top_file,
             cls.get_box_size,
-            cls.build_gro,
+
+            cls.submit_insertmol,
+            cls.inspect_insertmol,
+
             cls.make_gromacs_minimization_input,
             cls.submit_minimization_init,
             cls.submit_minimization_run,
+            cls.inspect_minimization,
+
             cls.make_gromacs_equilibration_input,
             cls.submit_equilibration_init,
             cls.submit_equilibration_run,
-            cls.collect_equilibrated_box_length,
-            # cls.make_gromacs_nemd_inputs,
+
+            cls.extract_equilibrated_box_length,
             cls.submit_nemd_init,
             if_(cls.should_do_alltogheter)(
                 cls.submit_nemd_run_parallel,
@@ -128,10 +127,7 @@ class MonomerWorkChain(WorkChain):
                     cls.submit_nemd_run_serial,
                 )
             ),
-            # cls.should_do_alltogheter,
-            # cls.set_nemd_inputs,
-            # cls.submit_parallel_nemd,
-            cls.collect_nemd_outputs,
+            cls.inspect_nemd,
 
             # cls.submit_postprocessing,
             cls.run_gmx_energy_all,
@@ -144,19 +140,81 @@ class MonomerWorkChain(WorkChain):
         )
 
         # OUTPUTS ############################################################################
-        spec.outputs.dynamic = True
+        spec.output(
+            'equilibrated_box_length_nm',
+            valid_type=orm.Float,
+            help='The edge length of the equilibrated cubic simulation box in nanometers.'
+        )
+        spec.output(
+            'viscosity_data',
+            valid_type=orm.ArrayData,
+            help='ArrayData containing `pressure_averages`, `shear_rates`, and `viscosities` arrays.'
+        )
+
+        spec.output_namespace(
+            'acpype',
+            valid_type=orm.SinglefileData,
+            dynamic=True,
+            help='ACPYPE output files.'
+        )
+        spec.output_namespace(
+            'nemd',
+            valid_type=orm.SinglefileData,
+            dynamic=True,
+            help='NEMD .edr output files for each shear rate.'
+        )
 
         # ERRORS ############################################################################
         spec.exit_code(
-            300, 'ERROR_ACPYPE_MISSING_OUTPUT',
+            300, 'ERROR_ACPYPE_FAILED',
+            message='The ACPYPE calculation did not finish successfully.'
+        )
+        spec.exit_code(
+            305, 'ERROR_ACPYPE_MISSING_OUTPUT',
             message='ACPYPE did not produce all expected output files.'
         )
         spec.exit_code(
-            370, 'ERROR_SUB_PROCESS_FAILED_GMX_NEMD',
+            310, 'ERROR_OBABEL_FAILED',
+            message='The Open Babel calculation did not finish successfully.'
+        )
+        spec.exit_code(
+            315, 'ERROR_OBELAB_MISSING_OUTPUT',
+            message='Open Babel did not produce the expected output file.'
+        )
+        spec.exit_code(
+            320, 'ERROR_VELOXCHEM_FAILED',
+            message='The VeloxChem calculation did not finish successfully.'
+        )
+        spec.exit_code(
+            325, 'ERROR_VELOXCHEM_MISSING_OUTPUT',
+            message='VeloxChem did not produce the expected output file.'
+        )
+        spec.exit_code(
+            330, 'ERROR_SUB_PROCESS_FAILED_GMX_MISSING_OUTPUT',
+            message='A GROMACS minimization subprocess calculation failed.'
+        )
+        spec.exit_code(
+            335, 'ERROR_SUB_PROCESS_FAILED_GMX_GROMP',
+            message='A GROMACS grompp subprocess calculation failed.'
+        )
+        spec.exit_code(
+            340, 'ERROR_SUB_PROCESS_FAILED_GMX_INSERTMOL',
+            message='A GROMACS insert-molecules subprocess calculation failed.'
+        )
+        spec.exit_code(
+            341, 'ERROR_SUB_PROCESS_FAILED_GMX_MINIMIZATION',
+            message='A GROMACS minimization subprocess calculation failed.'
+        )
+        spec.exit_code(
+            342, 'ERROR_SUB_PROCESS_FAILED_GMX_EQUILIBRATION',
+            message='A GROMACS equilibration subprocess calculation failed.'
+        )
+        spec.exit_code(
+            343, 'ERROR_SUB_PROCESS_FAILED_GMX_NEMD',
             message='A GROMACS NEMD subprocess calculation failed.'
         )
         spec.exit_code(
-            375, 'ERROR_SUB_PROCESS_FAILED_GMX_ENERGY',
+            344, 'ERROR_SUB_PROCESS_FAILED_GMX_ENERGY',
             message='A GROMACS energy subprocess calculation failed.'
         )
 
@@ -202,12 +260,10 @@ class MonomerWorkChain(WorkChain):
 
     def submit_acpype(self):
         """Submit acpype and obabel calculations to generate initial structure and parameters."""
-        basename = 'aiida'
-
         self.report('Running acpype through aiida-shell...')
-        results_acpype, node_acpype = launch_shell_job(
+        _, node = launch_shell_job(
             self.inputs.acpype_code,
-            arguments=f'-i {{smiles}} -n 0 -c bcc -q sqm -b {basename} -a {{ff}} -s 108000',
+            arguments=f'-i {{smiles}} -n 0 -c bcc -q sqm -b {BASENAME} -a {{ff}} -s 108000',
             nodes={
                 'smiles': self.inputs.smiles_string,
                 'ff': self.inputs.force_field
@@ -217,11 +273,15 @@ class MonomerWorkChain(WorkChain):
                     'withmpi': False,
                 }
             },
-            outputs=[f'{basename}.acpype'],
+            outputs=[f'{BASENAME}.acpype'],
+            submit=True
         )
-        self.report(f'Submitted job: {node_acpype}')
-        self.report(f'Outputs: {results_acpype}')
+        self.report(f'Submitted job: {node}')
+        # self.report(f'Outputs: {results_acpype}')
+        return ToContext(acpype_calc=node)
 
+    def inspect_acpype(self):
+        """Inspect the output of the ACPYPE calculation and store relevant files in the context."""
         # Expected filename patterns
         target_suffixes = {
             'gro': 'GMX.gro',
@@ -230,26 +290,33 @@ class MonomerWorkChain(WorkChain):
             'pdb': 'NEW.pdb',
         }
 
-        # TODO: probably should use a CalcFunction here to extract and store these files
-        missing = set(target_suffixes.keys())
-        out_node: orm.FolderData = results_acpype[f'{basename}_acpype']
-        for file_obj in out_node.list_objects():
-            filename = file_obj.name
-            for key in missing.copy():
-                suffix = target_suffixes[key]
-                if filename.endswith(suffix):
-                    setattr(self.ctx, key, wrap_file(out_node, filename))
-                    missing.remove(key)
-                    break
+        calc = self.ctx.acpype_calc
+        if not calc.is_finished_ok:
+            self.report('ACPYPE calculation failed.')
+            return self.exit_codes.ERROR_ACPYPE_FAILED
+        res = calc.outputs
+
+        missing = []
+        files = {}
+        folder = res[f'{BASENAME}_acpype']
+        for key, suffix in target_suffixes.items():
+            try:
+                file = fnc.extract_files_suffix(folder, orm.Str(suffix).store())
+            except ValueError:
+                missing.append(key)
+                continue
+            files[key] = file
+            setattr(self.ctx, key, file)
         if missing:
             self.report(f'Missing expected output files from ACPYPE: {missing}')
             return self.exit_codes.ERROR_ACPYPE_MISSING_OUTPUT
+        self.out('acpype', files)
 
     def submit_obabel(self):
         """Convert PDB file to XYZ using Open Babel."""
         self.report('Running obabel through aiida-shell...')
-        out_filename = 'mol.xyz'
-        results_obabel, node_obabel = launch_shell_job(
+        out_filename = f'{BASENAME}.xyz'
+        _, node = launch_shell_job(
             self.inputs.obabel_code,
             arguments = f'{{pdbfile}} -O {out_filename}',
             nodes={
@@ -261,13 +328,27 @@ class MonomerWorkChain(WorkChain):
                     'redirect_stderr': True,
                 }
             },
-            outputs=[out_filename]
+            outputs=[out_filename],
+            submit=True
         )
 
-        self.report(f'Submitted job: {node_obabel}')
-        self.report(f'Outputs: {results_obabel.keys()}')
+        self.report(f'Submitted job: {node}')
 
-        self.ctx.xyz = results_obabel[out_filename.replace('.', '_')]
+        return ToContext(obabel_calc=node)
+
+    def inspect_obabel(self):
+        """Inspect the output of the Open Babel calculation."""
+        calc = self.ctx.obabel_calc
+        if not calc.is_finished_ok:
+            self.report('Open Babel calculation failed.')
+            return self.exit_codes.ERROR_OBABEL_FAILED
+
+        try:
+            xyz_file = calc.outputs[f'{BASENAME}_xyz']
+        except exc.NotExistentKeyError:
+            self.report('Open Babel did not produce the expected XYZ output file.')
+            return self.exit_codes.ERROR_OBELAB_MISSING_OUTPUT
+        self.ctx.xyz = xyz_file
 
     def make_veloxchem_input(self):
         """Prepare input files for VeloxChem calculation."""
@@ -276,7 +357,7 @@ class MonomerWorkChain(WorkChain):
     def submit_veloxchem(self):
         """Submit a VeloxChem calculation to compute RESP charges and store the resulting PDB file"""
         self.report('Running veloxchem through aiida-shell...')
-        results_veloxchem, node_veloxchem = launch_shell_job(
+        res, node = launch_shell_job(
             self.inputs.veloxchem_code,
             arguments = '{script_file} {xyzfile}',
             nodes={
@@ -288,12 +369,25 @@ class MonomerWorkChain(WorkChain):
                     'withmpi': False,
                 }
             },
+            submit=True,
         )
 
-        self.report(f'Submitted job: {node_veloxchem}')
-        self.report(f'Outputs: {results_veloxchem}')
+        self.report(f'Submitted job: {node}')
+        return ToContext(veloxchem_calc=node)
 
-        self.ctx.pdb = results_veloxchem['stdout']
+    def inspect_veloxchem(self):
+        """Extract the PDB file with RESP charges from the VeloxChem calculation."""
+        calc = self.ctx.veloxchem_calc
+        if not calc.is_finished_ok:
+            self.report('VeloxChem calculation failed.')
+            return self.exit_codes.ERROR_VELOXCHEM_FAILED
+
+        try:
+            pdb_file = calc.outputs['stdout']
+        except exc.NotExistentKeyError:
+            self.report('VeloxChem did not produce the expected PDB output file.')
+            return self.exit_codes.ERROR_VELOXCHEM_MISSING_OUTPUT
+        self.ctx.pdb = pdb_file
 
     def run_resp_injection(self):
         """
@@ -326,10 +420,10 @@ class MonomerWorkChain(WorkChain):
 
         self.report(f"Calculated box edge length: {self.ctx.box_size.value:.2f} nm")
 
-    def build_gro(self):
+    def submit_insertmol(self):
         self.report(f'Running GROMACS insert-molecules to create a box of {self.inputs.nmols.value} molecules... ')
-        filename = 'system.gro'
-        results_insert, node_insert = launch_shell_job(
+        filename = f'{BASENAME}.gro'
+        _, node = launch_shell_job(
             self.inputs.gmx_code,
             arguments=(
                 f'insert-molecules -ci {{grofile}} -o {filename} -nmol {{nmols}} ' +
@@ -341,12 +435,28 @@ class MonomerWorkChain(WorkChain):
                 'box_vector': self.ctx.box_size
             },
             metadata=self.ctx.gromacs_serial_metadata,
-            outputs=[filename]
+            outputs=[filename],
+            submit=True
         )
-        self.report(f'Submitted job: {node_insert}')
-        self.report(f'Outputs: {results_insert}')
+        self.report(f'Submitted job: {node}')
+        # self.report(f'Outputs: {results_insert}')
 
-        self.ctx.system_gro = results_insert[filename.replace('.', '_')]
+        return ToContext(insertmol_calc=node)
+
+    def inspect_insertmol(self):
+        """Inspect the output of the insert-molecules calculation."""
+        calc = self.ctx.insertmol_calc
+        if not calc.is_finished_ok:
+            self.report('GROMACS insert-molecules calculation failed.')
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_INSERTMOL
+
+        try:
+            system_gro = calc.outputs[f'{BASENAME}_gro']
+        except exc.NotExistentKeyError:
+            self.report('GROMACS insert-molecules did not produce the expected output file.')
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_MISSING_OUTPUT
+
+        self.ctx.system_gro = system_gro
 
     def make_gromacs_minimization_input(self):
         """Generate a basic GROMACS minimization input file."""
@@ -355,8 +465,9 @@ class MonomerWorkChain(WorkChain):
         )
 
     def submit_minimization_init(self):
+        """Initialize GROMACS minimization run to generate .tpr file."""
         self.report('Running GROMACS minimization initialization...')
-        results_grompp, node_grompp = launch_shell_job(
+        _, node = launch_shell_job(
             self.inputs.gmx_code,
             arguments='grompp -f {mdpfile} -c {grofile} -r {grofile} -p {topfile} -o minimize.tpr',
             nodes={
@@ -366,31 +477,57 @@ class MonomerWorkChain(WorkChain):
                 'itpfile': self.ctx.itp_with_resp
             },
             metadata=self.ctx.gromacs_serial_metadata,
-            outputs=['mdout.mdp', 'minimize.tpr']
+            outputs=['mdout.mdp', 'minimize.tpr'],
+            submit=True
         )
 
-        self.report(f'Submitted job: {node_grompp}')
-        self.report(f'Outputs: {results_grompp}')
+        self.report(f'Submitted job: {node}')
 
-        self.ctx.tpr = results_grompp['minimize_tpr']
+        return ToContext(gromp_minimize_calc=node)
 
     def submit_minimization_run(self):
+        """Run GROMACS minimization mdrun."""
+        gromp_calc = self.ctx.gromp_minimize_calc
+        if not gromp_calc.is_finished_ok:
+            self.report('GROMACS grompp for minimization failed.')
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_GROMP
+        try:
+            tpr_file = gromp_calc.outputs['minimize_tpr']
+        except exc.NotExistentKeyError:
+            self.report('GROMP for minimization failed')
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_MISSING_OUTPUT
+
         self.report('Running GROMACS minimization mdrun...')
         # gmx_mpi mdrun -v -deffnm minimize
-        results_mdrun, node_mdrun = launch_shell_job(
+        _, node = launch_shell_job(
             self.inputs.gmx_code,
             arguments='mdrun -v -s {tprfile} -deffnm minimize',
             nodes={
-                'tprfile': self.ctx.tpr
+                'tprfile': tpr_file
             },
             metadata=self.ctx.gmx_run_metadata,
-            outputs=['minimize.gro']
+            outputs=['minimize.gro'],
+            submit=True
         )
 
-        self.report(f'Submitted job: {node_mdrun}')
-        self.report(f'Outputs: {results_mdrun}')
+        self.report(f'Submitted job: {node}')
 
-        self.ctx.minimized_gro = results_mdrun['minimize_gro']
+        return ToContext(minimize_calc=node)
+
+    def inspect_minimization(self):
+        """Inspect the output of the minimization calculation."""
+        calc = self.ctx.minimize_calc
+        if not calc.is_finished_ok:
+            self.report('GROMACS minimization calculation failed.')
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_MINIMIZATION
+
+        try:
+            minimized_gro = calc.outputs['minimize_gro']
+        except exc.NotExistentKeyError:
+            self.report('GROMACS minimization did not produce the expected output file.')
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_MISSING_OUTPUT
+
+        self.ctx.minimized_gro = minimized_gro
 
     def make_gromacs_equilibration_input(self):
         """Generate a basic GROMACS equilibration input file."""
@@ -404,7 +541,7 @@ class MonomerWorkChain(WorkChain):
         """Initialize GROMACS equilibration run to generate .tpr file."""
         self.report('Running GROMACS equilibration run INIT...')
         out_filename = 'equilibrate.tpr'
-        results_grompp, node_grompp = launch_shell_job(
+        _, node = launch_shell_job(
             self.inputs.gmx_code,
             arguments='grompp -f {mdpfile} -c {grofile} -r {grofile} -p {topfile} -o ' + out_filename,
             nodes={
@@ -414,23 +551,33 @@ class MonomerWorkChain(WorkChain):
                 'itpfile': self.ctx.itp_with_resp
             },
             metadata=self.ctx.gromacs_serial_metadata,
-            outputs=['mdout.mdp', out_filename]
+            outputs=['mdout.mdp', out_filename],
+            submit=True
         )
 
-        self.report(f'Submitted job: {node_grompp}')
-        self.report(f'Outputs: {results_grompp}')
+        self.report(f'Submitted job: {node}')
 
-        self.ctx.tpr = results_grompp[out_filename.replace('.', '_')]
+        return ToContext(gromp_equilibrate_calc=node)
 
     def submit_equilibration_run(self):
         """Run GROMACS equilibration mdrun."""
+        calc = self.ctx.gromp_equilibrate_calc
+        if not calc.is_finished_ok:
+            self.report('GROMACS grompp for equilibration failed.')
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_GROMP
+        try:
+            tpr_file = calc.outputs['equilibrate_tpr']
+        except exc.NotExistentKeyError:
+            self.report('GROMP for equilibration failed')
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_MISSING_OUTPUT
+
         self.report('Running GROMACS equilibration run MDRUN...')
         out_filename = 'equilibrate.gro'
         results_mdrun, node_mdrun = launch_shell_job(
             self.inputs.gmx_code,
             arguments='mdrun -v -s {tprfile} -deffnm equilibrate',
             nodes={
-                'tprfile': self.ctx.tpr
+                'tprfile': tpr_file
             },
             metadata=self.ctx.gmx_run_metadata,
             outputs=[out_filename]
@@ -482,19 +629,25 @@ class MonomerWorkChain(WorkChain):
     def submit_nemd_run_parallel(self):
         """Submit the parallel NEMD WorkChain."""
         self.report('Submitting GROMACS NEMD runs as parallel jobs...')
-        basename = 'aiida'
         for str_srate in self.ctx.str_shear_rates.values():
             tpr_calc = self.ctx[f'grompp_{str_srate}']
-            tpr_file = tpr_calc.outputs['aiida_tpr']
+            if not tpr_calc.is_finished_ok:
+                self.report(f'GROMACS grompp for shear rate {str_srate} failed.')
+                return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_GROMP
+            try:
+                tpr_file = tpr_calc.outputs['aiida_tpr']
+            except exc.NotExistentKeyError:
+                self.report(f'GROMP for shear rate {str_srate} failed')
+                return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_MISSING_OUTPUT
 
             _, node = launch_shell_job(
                 self.inputs.gmx_code,
-                arguments='mdrun -v -s {tpr_file} -deffnm ' + basename,
+                arguments='mdrun -v -s {tpr_file} -deffnm ' + BASENAME,
                 nodes={
                     'tpr_file': tpr_file,
                 },
                 metadata=self.ctx.gmx_run_metadata,
-                outputs=[f'{basename}.edr'],
+                outputs=[f'{BASENAME}.edr'],
                 submit=True
             )
 
@@ -511,19 +664,25 @@ class MonomerWorkChain(WorkChain):
         str_srate = self.ctx.str_shear_rates[srate]
         self.ctx.nemd_serial_cnt += 1
 
-        basename = 'aiida'
         tpr_calc = self.ctx[f'grompp_{str_srate}']
-        tpr_file = tpr_calc.outputs['aiida_tpr']
+        if not tpr_calc.is_finished_ok:
+            self.report(f'GROMACS grompp for shear rate {str_srate} failed.')
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_GROMP
+        try:
+            tpr_file = tpr_calc.outputs['aiida_tpr']
+        except exc.NotExistentKeyError:
+            self.report(f'GROMP for shear rate {str_srate} failed')
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_MISSING_OUTPUT
 
         self.report(f'Submitting GROMACS NEMD run for shear rate {str_srate} as a serial job...')
         _, node = launch_shell_job(
             self.inputs.gmx_code,
-            arguments='mdrun -v -s {tpr_file} -deffnm ' + basename,
+            arguments='mdrun -v -s {tpr_file} -deffnm ' + BASENAME,
             nodes={
                 'tpr_file': tpr_file,
             },
             metadata=self.ctx.gmx_run_metadata,
-            outputs=[f'{basename}.edr'],
+            outputs=[f'{BASENAME}.edr'],
             submit=True
         )
 
@@ -531,40 +690,43 @@ class MonomerWorkChain(WorkChain):
 
         return ToContext(**{f'nemd_{str_srate}': node})
 
-    def collect_nemd_outputs(self):
+    def inspect_nemd(self):
         """Collect .edr files from the NEMD parallel run."""
         self.report('Collecting .edr files from NEMD runs...')
 
-        calc_map = {str_srate: self.ctx[f'nemd_{str_srate}' ] for str_srate in self.ctx.str_shear_rates.values()}
-
-        failed = [str_srate for str_srate, calc in calc_map.items() if not calc.is_finished_ok]
+        calc_map = {srate: self.ctx[f'nemd_{str_srate}'] for srate, str_srate in self.ctx.str_shear_rates.items()}
+        failed = [srate for srate, calc in calc_map.items() if not calc.is_finished_ok]
         if failed:
             self.report(f'NEMD runs for shear rates {failed} did not finish successfully.')
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_NEMD
 
+        edr_files = {}
+        edr_outputs = {}
         self.ctx.edr_outputs = {}
-        for srate, str_srate in self.ctx.str_shear_rates.items():
-            calc = calc_map[str_srate]
+        for srate, calc in calc_map.items():
+            str_srate = self.ctx.str_shear_rates[srate]
             edr_file = calc.outputs['aiida_edr']
-            self.ctx.edr_outputs[srate] = edr_file
-            self.report(f'Collected .edr file for shear rate {str_srate}: {edr_file.filename}')
-            self.out(f'edr_output_{str_srate}', edr_file)
+            edr_files[srate] = edr_file
+            edr_outputs[f'edr_{str_srate}'] = edr_file
+            self.report(f'Collected .edr file for shear rate {srate}: {edr_file.filename}')
+
+        self.ctx.edr_files = edr_files
+        self.out('nemd', edr_outputs)
 
     def run_gmx_energy_all(self):
         """Run `gmx energy` to extract pressure data from each EDR file."""
-        basename = 'aiida'
         self.ctx.pressure_xvg = {}
 
-        for srate, edr_file in self.ctx.edr_outputs.items():
+        for srate, edr_file in self.ctx.edr_files.items():
             str_srate = self.ctx.str_shear_rates[srate]
             _, node = launch_shell_job(
                 self.inputs.gmx_code,
-                arguments=f'energy -f {{edr}} -o {basename}.xvg',
+                arguments=f'energy -f {{edr}} -o {BASENAME}.xvg',
                 nodes={
                     'edr': edr_file,
                     'stdin': orm.SinglefileData.from_string('38\n0\n'),  # Select term 38, confirm with 0
                 },
-                outputs=[f'{basename}.xvg'],
+                outputs=[f'{BASENAME}.xvg'],
                 metadata={
                     'options': {
                         'resources': {'num_machines': 1},
@@ -581,20 +743,19 @@ class MonomerWorkChain(WorkChain):
 
     def collect_energy_outputs(self):
         """Collect .xvg files from the energy extraction runs."""
-        calc_map = {str_srate: self.ctx[f'energy_{str_srate}'] for str_srate in self.ctx.str_shear_rates.values()}
+        calc_map = {srate: self.ctx[f'energy_{str_srate}'] for srate, str_srate in self.ctx.str_shear_rates.items()}
 
-        failed = [str_srate for str_srate, calc in calc_map.items() if not calc.is_finished_ok]
+        failed = [srate for srate, calc in calc_map.items() if not calc.is_finished_ok]
         if failed:
             self.report(f'Energy extraction runs for shear rates {failed} did not finish successfully.')
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_ENERGY
 
         self.ctx.pressure_xvg = {}
-        for srate, str_srate in self.ctx.str_shear_rates.items():
-            calc = calc_map[str_srate]
+        for srate, calc in calc_map.items():
             xvg_file = calc.outputs['aiida_xvg']
             self.ctx.pressure_xvg[srate] = xvg_file
 
-    def collect_equilibrated_box_length(self):
+    def extract_equilibrated_box_length(self):
         """Extract box length from the equilibrated .gro file."""
         box_length_nm = fnc.extract_box_length(self.ctx.equilibrated_gro)
         self.report(f"Box length extracted: {box_length_nm.value} nm")
@@ -610,7 +771,7 @@ class MonomerWorkChain(WorkChain):
             pressures.append(avg_pressure.value)
             self.report(f"Average pressure for shear rate {srate}: {avg_pressure.value} bar")
 
-        self.ctx.pressures = orm.List(list=pressures).store()
+        self.ctx.pressures = orm.List(list=pressures).store()  # TODO: bind using a calcfunction for provenance
 
     def compute_viscosities(self):
         """Compute average pressures, shear rates, and viscosities."""
