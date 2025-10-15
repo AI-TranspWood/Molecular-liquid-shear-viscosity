@@ -324,6 +324,9 @@ def extract_box_length(grofile: orm.SinglefileData) -> orm.Float:
     box_length_x = float(list(filter(None, last_line.split()))[0])
     return orm.Float(box_length_x)
 
+# TODO: check in the aiida 2.5.1 run i got a negative value here.
+# Should the result of np.mean(data[:, 1]) always be negative? If so should we raise an error if it's not?
+# Can it depend on the number of steps?
 @calcfunction
 def extract_pressure_from_xvg(xvg_file: orm.SinglefileData) -> orm.List:
     """Extract pressure values from a GROMACS .xvg file."""

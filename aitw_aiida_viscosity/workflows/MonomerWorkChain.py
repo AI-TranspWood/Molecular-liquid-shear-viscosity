@@ -58,6 +58,7 @@ class MonomerWorkChain(WorkChain):
             default=lambda: orm.Float(0.001),
             help='The MD time step in picoseconds.'
         )
+        # TODO: Should these be always positive? Should we enforce a min/max value on the elements
         spec.input(
             'shear_rates', valid_type=orm.List,
             default=lambda: orm.List(list=[0.005, 0.002, 0.05, 0.02, 0.01, 0.1, 0.2]),
@@ -154,14 +155,11 @@ class MonomerWorkChain(WorkChain):
             ),
             cls.inspect_nemd,
 
-            # cls.submit_postprocessing,
             cls.submit_energy_parallel,
             cls.inspect_energy,
 
             cls.collect_pressure_averages,
             cls.compute_viscosities,
-
-            # cls.finalize
         )
 
         # OUTPUTS ############################################################################
@@ -484,7 +482,6 @@ class MonomerWorkChain(WorkChain):
             submit=True
         )
         self.report(f'Submitted job: {node}')
-        # self.report(f'Outputs: {results_insert}')
 
         return ToContext(insertmol_calc=node)
 
@@ -526,7 +523,6 @@ class MonomerWorkChain(WorkChain):
             outputs=['mdout.mdp', 'minimize.tpr'],
             submit=True
         )
-
         self.report(f'Submitted job: {node}')
 
         return ToContext(gromp_minimize_calc=node)
@@ -555,7 +551,6 @@ class MonomerWorkChain(WorkChain):
             outputs=['minimize.gro'],
             submit=True
         )
-
         self.report(f'Submitted job: {node}')
 
         return ToContext(minimize_calc=node)
@@ -600,7 +595,6 @@ class MonomerWorkChain(WorkChain):
             outputs=['mdout.mdp', out_filename],
             submit=True
         )
-
         self.report(f'Submitted job: {node}')
 
         return ToContext(gromp_equilibrate_calc=node)
@@ -629,8 +623,8 @@ class MonomerWorkChain(WorkChain):
             outputs=[out_filename],
             submit=True
         )
-
         self.report(f'Submitted job: {node}')
+
         return ToContext(equilibrate_calc=node)
 
     def inspect_equilibration(self):
