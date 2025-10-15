@@ -78,8 +78,7 @@ class MonomerWorkChain(WorkChain):
         )
         spec.input(
             'gromacs_equilibration_steps', valid_type=orm.Int,
-            default=lambda: orm.Int(5000),
-            # default=lambda: orm.Int(500000),  # TODO: use this value after testing
+            default=lambda: orm.Int(500000),
         )
 
         spec.input('acpype_code', valid_type=orm.AbstractCode, help='Code for running the `acpype` program.')
