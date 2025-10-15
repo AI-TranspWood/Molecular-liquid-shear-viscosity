@@ -260,12 +260,12 @@ class MonomerWorkChain(WorkChain):
         """Setup context variables."""
         # Use remote code if local code not provided
         gmx_remote = self.inputs.gmx_code
+        gmx_local = self.inputs.gmx_code_local if 'gmx_code_local' in self.inputs else gmx_remote
         self.report(f'Using GROMACS <{gmx_remote.pk}> for remote execution.')
-        gmx_local = self.inputs.gmx_code_local or gmx_remote
         self.ctx.gmx_code_local = gmx_local
         self.report(f'Using GROMACS <{gmx_local.pk}> for local execution.')
 
-        self.ctx.gmx_code_local = self.inputs.gmx_code_local or self.inputs.gmx_code
+        self.ctx.gmx_code_local = gmx_local
 
         self.ctx.smiles_string = self.inputs.smiles_string.value
         self.ctx.ff = self.inputs.force_field.value
