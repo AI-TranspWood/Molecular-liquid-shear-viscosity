@@ -74,6 +74,22 @@ def plot_viscosity(
         click.echo(f"Curve fitting failed: {e}")
         sys.exit(1)
 
+    if show_plot:
+        messages = []
+        for backend in ['Qt5Agg', 'TkAgg']:
+            try:
+                matplotlib.use(backend)
+            except Exception as e:
+                messages.append(f"Could not use matplotlib backend '{backend}': {e}")
+                continue
+            else:
+                break
+        else:
+            for msg in messages:
+                click.echo(msg)
+            click.echo('Could not set a suitable matplotlib backend to show the plot.')
+            show_plot = False
+
     # Create plot
     fig, ax = plt.subplots()
     ax.loglog(shear_rates, viscosities, 'o', label='MD Data')
@@ -97,18 +113,4 @@ def plot_viscosity(
     click.echo(f"Plot saved locally as '{output_file}'.")
 
     if show_plot:
-        for backend in ['TkAgg', 'Qt5Agg']:
-            messages = []
-            try:
-                matplotlib.use(backend)
-            except Exception as e:
-                messages.append(f"Could not use matplotlib backend '{backend}': {e}")
-                continue
-            else:
-                break
-        else:
-            for msg in messages:
-                click.echo(msg)
-            click.echo('Could not set a suitable matplotlib backend to show the plot.')
-            return
         plt.show()
