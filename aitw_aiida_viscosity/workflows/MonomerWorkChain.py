@@ -867,12 +867,18 @@ class MonomerWorkChain(WorkChain):
     def collect_pressure_averages(self):
         """Collect average pressures from the postprocessing workchain."""
         pressures = {}
+        has_negatives = False
         for defvel in self.inputs.deform_velocities:
             str_defvel = self.ctx.str_defvel[defvel]
             xvg_file = self.ctx.pressure_xvg[defvel]
             avg_pressure = fnc.extract_pressure_from_xvg(xvg_file)
             pressures[f'pressure_{str_defvel}'] = avg_pressure
+            if avg_pressure.value < 0:
+                has_negatives = True
             self.report(f"Average pressure for deformation velocity {defvel}: {avg_pressure.value} bar")
+
+        if has_negatives:
+            self.report('WARNING: Negative pressures detected, results may be unphysical!')
 
         self.ctx.pressures = fnc.join_pressure_results(self.inputs.deform_velocities, **pressures)
 
