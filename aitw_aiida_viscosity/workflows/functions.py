@@ -389,12 +389,12 @@ def compute_viscosities(
         viscosities.append(viscosity_mPa_s)
 
     # Ensure arrays are sorted by increasing deformation velocity
-    order_args = np.argsort(def_vels)
+    order_args = np.argsort(deform_vel)
 
     def_vels = np.array(deform_vel)[order_args]
     srate_array = np.array(shear_rates)[order_args]
     visc_array = np.array(viscosities)[order_args]
-    pressures_array = np.array(pressures.get_list())[ord]
+    pressures_array = np.array(pressures.get_list())[order_args]
 
     array = orm.ArrayData()
     array.set_array('deformation_velocities', def_vels)

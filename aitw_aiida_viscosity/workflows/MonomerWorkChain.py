@@ -33,6 +33,12 @@ def clean_workchain_calcs(workchain):
 
     return cleaned_calcs
 
+def validate_deform_velocities(node: orm.List, _):
+    """Validate that all deformation velocities are positive."""
+    for value in node.get_list():
+        if value <= 0.0:
+            return 'All deformation velocities must be positive.'
+
 class MonomerWorkChain(WorkChain):
     @classmethod
     def define(cls, spec):
@@ -60,11 +66,10 @@ class MonomerWorkChain(WorkChain):
             default=lambda: orm.Float(0.001),
             help='The MD time step in picoseconds.'
         )
-        # TODO: Should these be always positive? Should we enforce a min/max value on the elements
-        # Add validation for all positive
         spec.input(
             'deform_velocities', valid_type=orm.List,
             default=lambda: orm.List(list=[0.005, 0.002, 0.05, 0.02, 0.01, 0.1, 0.2]),
+            validator=validate_deform_velocities,
             help=(
                 'List of deformation velocities to use in the NEMD simulations. '
                 'See https://manual.gromacs.org/current/user-guide/mdp-options.html#mdp-deform for details.'
@@ -80,7 +85,6 @@ class MonomerWorkChain(WorkChain):
                 'See https://veloxchem.org/docs/basis_sets.html for details and available basis sets.'
             )
         )
-        # TODO: Add these as inputs also to the CLI
         spec.input(
             'gromacs_minimization_steps', valid_type=orm.Int,
             default=lambda: orm.Int(5000),
@@ -88,7 +92,7 @@ class MonomerWorkChain(WorkChain):
         )
         spec.input(
             'gromacs_equilibration_steps', valid_type=orm.Int,
-            default=lambda: orm.Int(5000),
+            default=lambda: orm.Int(500000),
             help='The number of steps to use in the GROMACS equilibration.'
         )
 
@@ -123,7 +127,6 @@ class MonomerWorkChain(WorkChain):
             help='If `True`, work directories of all called calculation will be cleaned at the end of execution.'
         )
 
-        # TODO: do the fitting as parte of the WC to also have the final viscosity as a node
         # OUTLINE ############################################################################
         spec.outline(
             cls.setup,
@@ -185,7 +188,10 @@ class MonomerWorkChain(WorkChain):
         spec.output(
             'viscosity_data',
             valid_type=orm.ArrayData,
-            help='ArrayData containing `pressure_averages`, `shear_rates`, and `viscosities` arrays.'
+            help=(
+                'ArrayData containing `deformation_velocities`, `pressure_averages`, `shear_rates`, '
+                'and `viscosities` arrays.'
+            )
         )
         spec.output(
             'xyz', valid_type=orm.SinglefileData,
@@ -680,6 +686,7 @@ class MonomerWorkChain(WorkChain):
     def make_nemd_inputs(self):
         """Prepare input files for NEMD simulations with different deformation velocities."""
         self.report('Preparing NEMD input files for each deformation velocity...')
+        self.report(str(self.inputs.deform_velocities))
 
         self.ctx.str_defvel = {defvel: fnc.string_safe_float(defvel) for defvel in self.inputs.deform_velocities}
 

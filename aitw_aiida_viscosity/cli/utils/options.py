@@ -4,6 +4,19 @@ from aiida.cmdline.params import types
 from aiida.cmdline.params.options import OverridableOption
 import click
 
+
+def validate_deformation_velocities(ctx, param, value):
+    """Validate that the deformation velocities are a comma-separated list of positive floats."""
+    if value is None:
+        return None
+    try:
+        velocities = [float(v) for v in value.split(',')]
+        if any(v <= 0 for v in velocities):
+            raise ValueError
+        return velocities
+    except:
+        raise click.BadParameter('Deformation velocities must be a comma-separated list of positive numbers.')
+
 ACPYPE_CODE = OverridableOption(
     '--acpype', 'acpype_code', type=types.CodeParamType(entry_point='core.shell'),
     help='A single code for acpype (e.g. acpype@localhost).'
@@ -40,6 +53,15 @@ SMILES_STRING = OverridableOption(
     help='The SMILE code representation of the molecule to simulate.'
 )
 
+DEFORM_VELOCITIES = OverridableOption(
+    '-V',
+    '--deform-velocities',
+    'deform_velocities',
+    type=click.STRING,
+    callback=validate_deformation_velocities,
+    help='A comma-separated list of deformation velocities to use for the simulations'
+)
+
 FORCE_FIELD = OverridableOption(
     '-f',
     '--force-field',
@@ -70,6 +92,20 @@ NUM_STEPS = OverridableOption(
     'num_steps',
     type=click.INT,
     help='The number of MD steps to perform in the production run.'
+)
+
+NUM_STEPS_MINIMIZATION = OverridableOption(
+    '--num-steps-minimization',
+    'num_steps_min',
+    type=click.INT,
+    help='The number of MD steps to use for the energy minimization.'
+)
+
+NUM_STEPS_EQUIBRATION = OverridableOption(
+    '--num-steps-equibration',
+    'num_steps_eq',
+    type=click.INT,
+    help='The number of MD steps to use for the NVT and NPT equilibration.'
 )
 
 TIME_STEP = OverridableOption(
