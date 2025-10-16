@@ -1,4 +1,6 @@
 """Implementation of the WorkChain for AITW viscosity calculation."""
+import copy
+
 from aiida import orm
 from aiida.common import exceptions as exc
 from aiida.engine import ToContext, WorkChain, if_, while_
@@ -59,6 +61,7 @@ class MonomerWorkChain(WorkChain):
             help='The MD time step in picoseconds.'
         )
         # TODO: Should these be always positive? Should we enforce a min/max value on the elements
+        # Add validation for all positive
         spec.input(
             'shear_rates', valid_type=orm.List,
             default=lambda: orm.List(list=[0.005, 0.002, 0.05, 0.02, 0.01, 0.1, 0.2]),
@@ -72,6 +75,7 @@ class MonomerWorkChain(WorkChain):
                 'with the GAFF and GAFF2 force fields.'
             )
         )
+        # TODO: Add these as inputs also to the CLI
         spec.input(
             'gromacs_minimization_steps', valid_type=orm.Int,
             default=lambda: orm.Int(5000),
@@ -79,7 +83,7 @@ class MonomerWorkChain(WorkChain):
         )
         spec.input(
             'gromacs_equilibration_steps', valid_type=orm.Int,
-            default=lambda: orm.Int(500000),
+            default=lambda: orm.Int(5000),
         )
 
         spec.input('acpype_code', valid_type=orm.AbstractCode, help='Code for running the `acpype` program.')
@@ -113,6 +117,7 @@ class MonomerWorkChain(WorkChain):
             help='If `True`, work directories of all called calculation will be cleaned at the end of execution.'
         )
 
+        # TODO: do the fitting as parte of the WC to also have the final viscosity as a node
         # OUTLINE ############################################################################
         spec.outline(
             cls.setup,
@@ -311,9 +316,10 @@ class MonomerWorkChain(WorkChain):
                 'ff': self.inputs.force_field
             },
             metadata={
+                'call_link_label': 'acpype',
                 'options': {
                     'withmpi': False,
-                }
+                },
             },
             outputs=[f'{BASENAME}.acpype'],
             submit=True
@@ -365,6 +371,7 @@ class MonomerWorkChain(WorkChain):
                 'pdbfile': self.ctx.pdb
             },
             metadata={
+                'call_link_label': 'obabel',
                 'options': {
                     'withmpi': False,
                     'redirect_stderr': True,
@@ -400,7 +407,7 @@ class MonomerWorkChain(WorkChain):
     def submit_veloxchem(self):
         """Submit a VeloxChem calculation to compute RESP charges and store the resulting PDB file"""
         self.report('Running veloxchem through aiida-shell...')
-        res, node = launch_shell_job(
+        _, node = launch_shell_job(
             self.inputs.veloxchem_code,
             arguments = '{script_file} {xyzfile}',
             nodes={
@@ -408,6 +415,7 @@ class MonomerWorkChain(WorkChain):
                 'xyzfile': self.ctx.xyz
             },
             metadata = {
+                'call_link_label': 'veloxchem',
                 'options': {
                     'withmpi': False,
                 }
@@ -466,6 +474,8 @@ class MonomerWorkChain(WorkChain):
     def submit_insertmol(self):
         self.report(f'Running GROMACS insert-molecules to create a box of {self.inputs.nmols.value} molecules... ')
         filename = f'{BASENAME}.gro'
+        metadata = copy.deepcopy(self.ctx.gromacs_serial_metadata)
+        metadata['call_link_label'] = 'insert_molecules'
         _, node = launch_shell_job(
             self.ctx.gmx_code_local,
             arguments=(
@@ -477,7 +487,7 @@ class MonomerWorkChain(WorkChain):
                 'nmols': self.inputs.nmols,
                 'box_vector': self.ctx.box_size
             },
-            metadata=self.ctx.gromacs_serial_metadata,
+            metadata=metadata,
             outputs=[filename],
             submit=True
         )
@@ -510,6 +520,8 @@ class MonomerWorkChain(WorkChain):
     def submit_minimization_init(self):
         """Initialize GROMACS minimization run to generate .tpr file."""
         self.report('Running GROMACS minimization initialization...')
+        metadata = copy.deepcopy(self.ctx.gromacs_serial_metadata)
+        metadata['call_link_label'] = 'minimization_grompp'
         _, node = launch_shell_job(
             self.ctx.gmx_code_local,
             arguments='grompp -f {mdpfile} -c {grofile} -r {grofile} -p {topfile} -o minimize.tpr',
@@ -519,7 +531,7 @@ class MonomerWorkChain(WorkChain):
                 'topfile': self.ctx.top_updated,
                 'itpfile': self.ctx.itp_with_resp
             },
-            metadata=self.ctx.gromacs_serial_metadata,
+            metadata=metadata,
             outputs=['mdout.mdp', 'minimize.tpr'],
             submit=True
         )
@@ -540,6 +552,8 @@ class MonomerWorkChain(WorkChain):
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_MISSING_OUTPUT
 
         self.report('Running GROMACS minimization mdrun...')
+        metadata = copy.deepcopy(self.ctx.gmx_run_metadata)
+        metadata['call_link_label'] = 'minimization_mdrun'
         # gmx_mpi mdrun -v -deffnm minimize
         _, node = launch_shell_job(
             self.inputs.gmx_code,
@@ -547,7 +561,7 @@ class MonomerWorkChain(WorkChain):
             nodes={
                 'tprfile': tpr_file
             },
-            metadata=self.ctx.gmx_run_metadata,
+            metadata=metadata,
             outputs=['minimize.gro'],
             submit=True
         )
@@ -581,6 +595,8 @@ class MonomerWorkChain(WorkChain):
     def submit_equilibration_init(self):
         """Initialize GROMACS equilibration run to generate .tpr file."""
         self.report('Running GROMACS equilibration run INIT...')
+        metadata = copy.deepcopy(self.ctx.gromacs_serial_metadata)
+        metadata['call_link_label'] = 'equilibration_grompp'
         out_filename = 'equilibrate.tpr'
         _, node = launch_shell_job(
             self.ctx.gmx_code_local,
@@ -591,7 +607,7 @@ class MonomerWorkChain(WorkChain):
                 'topfile': self.ctx.top_updated,
                 'itpfile': self.ctx.itp_with_resp
             },
-            metadata=self.ctx.gromacs_serial_metadata,
+            metadata=metadata,
             outputs=['mdout.mdp', out_filename],
             submit=True
         )
@@ -612,6 +628,8 @@ class MonomerWorkChain(WorkChain):
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_MISSING_OUTPUT
 
         self.report('Running GROMACS equilibration run MDRUN...')
+        metadata = copy.deepcopy(self.ctx.gmx_run_metadata)
+        metadata['call_link_label'] = 'equilibration_mdrun'
         out_filename = 'equilibrate.gro'
         _, node = launch_shell_job(
             self.inputs.gmx_code,
@@ -619,7 +637,7 @@ class MonomerWorkChain(WorkChain):
             nodes={
                 'tprfile': tpr_file
             },
-            metadata=self.ctx.gmx_run_metadata,
+            metadata=metadata,
             outputs=[out_filename],
             submit=True
         )
@@ -644,6 +662,8 @@ class MonomerWorkChain(WorkChain):
 
     def submit_nemd_init(self):
         self.report('Running GROMACS NEMD initialization for each shear rate...')
+        metadata = copy.deepcopy(self.ctx.gromacs_serial_metadata)
+        metadata['call_link_label'] = 'nemd_grompp'
         fname = 'aiida.tpr'
         self.ctx.str_shear_rates = {}
         for srate in self.inputs.shear_rates:
@@ -664,7 +684,7 @@ class MonomerWorkChain(WorkChain):
                     'topfile': self.ctx.top_updated,
                     'itpfile': self.ctx.itp_with_resp,
                 },
-                metadata=self.ctx.gromacs_serial_metadata,
+                metadata=metadata,
                 outputs=[fname],
                 submit=True
             )
@@ -683,6 +703,8 @@ class MonomerWorkChain(WorkChain):
     def submit_nemd_run_parallel(self):
         """Submit the parallel NEMD WorkChain."""
         self.report('Submitting GROMACS NEMD runs as parallel jobs...')
+        metadata = copy.deepcopy(self.ctx.gmx_run_metadata)
+        metadata['call_link_label'] = 'nemd_mdrun'
         for str_srate in self.ctx.str_shear_rates.values():
             tpr_calc = self.ctx[f'grompp_{str_srate}']
             if not tpr_calc.is_finished_ok:
@@ -700,7 +722,7 @@ class MonomerWorkChain(WorkChain):
                 nodes={
                     'tpr_file': tpr_file,
                 },
-                metadata=self.ctx.gmx_run_metadata,
+                metadata=metadata,
                 outputs=[f'{BASENAME}.edr'],
                 submit=True
             )
@@ -729,13 +751,15 @@ class MonomerWorkChain(WorkChain):
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_MISSING_OUTPUT
 
         self.report(f'Submitting GROMACS NEMD run for shear rate {str_srate} as a serial job...')
+        metadata = copy.deepcopy(self.ctx.gmx_run_metadata)
+        metadata['call_link_label'] = 'nemd_mdrun'
         _, node = launch_shell_job(
             self.inputs.gmx_code,
             arguments='mdrun -v -s {tpr_file} -deffnm ' + BASENAME,
             nodes={
                 'tpr_file': tpr_file,
             },
-            metadata=self.ctx.gmx_run_metadata,
+            metadata=metadata,
             outputs=[f'{BASENAME}.edr'],
             submit=True
         )
@@ -769,8 +793,8 @@ class MonomerWorkChain(WorkChain):
 
     def submit_energy_parallel(self):
         """Run `gmx energy` to extract pressure data from each EDR file."""
+        self.report('Submitting GROMACS energy extraction runs for each shear rate...')
         self.ctx.pressure_xvg = {}
-
         for srate, edr_file in self.ctx.edr_files.items():
             str_srate = self.ctx.str_shear_rates[srate]
             _, node = launch_shell_job(
@@ -783,6 +807,7 @@ class MonomerWorkChain(WorkChain):
                 },
                 outputs=[f'{BASENAME}.xvg'],
                 metadata={
+                    'call_link_label': f'gromacs_energy',
                     'options': {
                         'resources': {'num_machines': 1},
                         'withmpi': False,
@@ -824,7 +849,6 @@ class MonomerWorkChain(WorkChain):
             str_srate = self.ctx.str_shear_rates[srate]
             xvg_file = self.ctx.pressure_xvg[srate]
             avg_pressure = fnc.extract_pressure_from_xvg(xvg_file)
-            # pressures.append(avg_pressure.value)
             pressures[f'pressure_{str_srate}'] = avg_pressure
             self.report(f"Average pressure for shear rate {srate}: {avg_pressure.value} bar")
 
