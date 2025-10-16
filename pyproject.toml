@@ -51,6 +51,9 @@ plotting = [
 pre-commit = [
     'pre-commit',
 ]
+tui = [
+    'trogon',
+]
 
 [project.scripts]
 aitw-viscosity = 'aitw_aiida_viscosity.cli:cmd_root'
