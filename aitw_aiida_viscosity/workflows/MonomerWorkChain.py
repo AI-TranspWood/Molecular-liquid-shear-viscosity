@@ -778,7 +778,8 @@ class MonomerWorkChain(WorkChain):
                 arguments=f'energy -f {{edr}} -o {BASENAME}.xvg',
                 nodes={
                     'edr': edr_file,
-                    'stdin': orm.SinglefileData.from_string('38\n0\n'),  # Select term 38, confirm with 0
+                    # Select term 38, confirm with 0
+                    'stdin': orm.SinglefileData.from_string('38\n0\n', filename='stdin'),
                 },
                 outputs=[f'{BASENAME}.xvg'],
                 metadata={
