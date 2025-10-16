@@ -105,7 +105,7 @@ NUM_STEPS_EQUIBRATION = OverridableOption(
     '--num-steps-equibration',
     'num_steps_eq',
     type=click.INT,
-    help='The number of MD steps to use for the NVT and NPT equilibration.'
+    help='The number of MD steps to use for the equilibration run.'
 )
 
 TIME_STEP = OverridableOption(
