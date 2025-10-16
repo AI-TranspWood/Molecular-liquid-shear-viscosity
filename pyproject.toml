@@ -29,6 +29,7 @@ dependencies = [
     'aiida-core>=2.5.1',
     'aiida-shell',
     'numpy',
+    'scipy',
 
     'rdkit',
     # Provided as CODE entities
@@ -45,7 +46,6 @@ Source = 'https://github.com/AI-TranspWood/Molecular-liquid-shear-viscosity'
 [project.optional-dependencies]
 plotting = [
     'matplotlib',
-    'scipy',
     'PyQt5',
 ]
 pre-commit = [

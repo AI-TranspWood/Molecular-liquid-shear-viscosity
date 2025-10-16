@@ -63,8 +63,12 @@ class MonomerWorkChain(WorkChain):
         # TODO: Should these be always positive? Should we enforce a min/max value on the elements
         # Add validation for all positive
         spec.input(
-            'shear_rates', valid_type=orm.List,
+            'deform_velocities', valid_type=orm.List,
             default=lambda: orm.List(list=[0.005, 0.002, 0.05, 0.02, 0.01, 0.1, 0.2]),
+            help=(
+                'List of deformation velocities to use in the NEMD simulations. '
+                'See https://manual.gromacs.org/current/user-guide/mdp-options.html#mdp-deform for details.'
+            )
         )
 
         spec.input(
@@ -72,7 +76,8 @@ class MonomerWorkChain(WorkChain):
             default=lambda: orm.Str('6-31G*'),
             help=(
                 'The basis set to use in the VeloxChem calculation. This should be 6-31G* for RESP partial charges '
-                'with the GAFF and GAFF2 force fields.'
+                'with the GAFF and GAFF2 force fields. '
+                'See https://veloxchem.org/docs/basis_sets.html for details and available basis sets.'
             )
         )
         # TODO: Add these as inputs also to the CLI
@@ -84,6 +89,7 @@ class MonomerWorkChain(WorkChain):
         spec.input(
             'gromacs_equilibration_steps', valid_type=orm.Int,
             default=lambda: orm.Int(5000),
+            help='The number of steps to use in the GROMACS equilibration.'
         )
 
         spec.input('acpype_code', valid_type=orm.AbstractCode, help='Code for running the `acpype` program.')
@@ -150,6 +156,8 @@ class MonomerWorkChain(WorkChain):
             cls.inspect_equilibration,
 
             cls.extract_equilibrated_box_length,
+
+            # cls.make_nemd_inputs,
             cls.submit_nemd_init,
             if_(cls.should_do_alltogheter)(
                 cls.submit_nemd_run_parallel,
@@ -164,7 +172,8 @@ class MonomerWorkChain(WorkChain):
             cls.inspect_energy,
 
             cls.collect_pressure_averages,
-            cls.compute_viscosities,
+            cls.compute_viscosity_data,
+            cls.fit_viscosity,
         )
 
         # OUTPUTS ############################################################################
@@ -201,7 +210,15 @@ class MonomerWorkChain(WorkChain):
             'nemd',
             valid_type=orm.SinglefileData,
             dynamic=True,
-            help='NEMD .edr output files for each shear rate.'
+            help='NEMD .edr output files for each deformation velocity.'
+        )
+        spec.output(
+            'eta_N', valid_type=orm.Float, required=False,
+            help='TODO description of quantity'
+        )
+        spec.output(
+            'sigma_E', valid_type=orm.Float, required=False,
+            help='TODO description of quantity'
         )
 
         # ERRORS ############################################################################
@@ -660,20 +677,25 @@ class MonomerWorkChain(WorkChain):
         self.ctx.equilibrated_gro = equilibrated_gro
         self.out('equilibrated_gro', equilibrated_gro)
 
+    # def make_nemd_inputs(self):
+    #     """Prepare input files for NEMD simulations with different deformation velocities."""
+    #     self.report('Preparing NEMD input files for each deformation velocity...')
+
     def submit_nemd_init(self):
-        self.report('Running GROMACS NEMD initialization for each shear rate...')
+        """Submit GROMACS grompp for each deformation velocity to generate .tpr files."""
+        self.report('Running GROMACS NEMD initialization for each deformation velocity...')
         metadata = copy.deepcopy(self.ctx.gromacs_serial_metadata)
         metadata['call_link_label'] = 'nemd_grompp'
         fname = 'aiida.tpr'
-        self.ctx.str_shear_rates = {}
-        for srate in self.inputs.shear_rates:
-            str_srate = fnc.string_safe_float(srate)
-            self.ctx.str_shear_rates[srate] = str_srate
-            mdp_file = fnc.generate_gromacs_shear_rate_input(
+        self.ctx.str_defvel = {}
+        for defvel in self.inputs.deform_velocities:
+            str_defvel = fnc.string_safe_float(defvel)
+            self.ctx.str_defvel[defvel] = str_defvel
+            mdp_file = fnc.generate_gromacs_deform_vel_input(
                 nsteps=self.inputs.num_steps,
                 time_step=self.inputs.time_step,
                 ref_t=self.inputs.reference_temperature,
-                shear_rate=orm.Float(srate)
+                deform_vel=orm.Float(defvel)
             )
             _, node = launch_shell_job(
                 self.ctx.gmx_code_local,
@@ -688,11 +710,11 @@ class MonomerWorkChain(WorkChain):
                 outputs=[fname],
                 submit=True
             )
-            self.report(f'Submitted job for shear rate {srate}: {node}')
-            self.to_context(**{f'grompp_{str_srate}': node})
+            self.report(f'Submitted job for deformation velocity {defvel}: {node}')
+            self.to_context(**{f'grompp_{str_defvel}': node})
 
     def should_do_alltogheter(self) -> bool:
-        """Check if all shear rates can be in parallel runs."""
+        """Check if all deformation velocity can be in parallel runs."""
         sched = self.ctx.gmx_scheduler
         if isinstance(sched, DIRECT_SCHEDULER):
             self.report('Direct scheduler does not support running multiple jobs.')
@@ -701,19 +723,19 @@ class MonomerWorkChain(WorkChain):
         return True
 
     def submit_nemd_run_parallel(self):
-        """Submit the parallel NEMD WorkChain."""
+        """Submit all NEMD runs as parallel/concurrent jobs."""
         self.report('Submitting GROMACS NEMD runs as parallel jobs...')
         metadata = copy.deepcopy(self.ctx.gmx_run_metadata)
         metadata['call_link_label'] = 'nemd_mdrun'
-        for str_srate in self.ctx.str_shear_rates.values():
-            tpr_calc = self.ctx[f'grompp_{str_srate}']
+        for defvel, str_defvel in self.ctx.str_defvel.items():
+            tpr_calc = self.ctx[f'grompp_{str_defvel}']
             if not tpr_calc.is_finished_ok:
-                self.report(f'GROMACS grompp for shear rate {str_srate} failed.')
+                self.report(f'GROMACS grompp for deformation velocity {defvel} failed.')
                 return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_GROMP
             try:
                 tpr_file = tpr_calc.outputs['aiida_tpr']
             except exc.NotExistentKeyError:
-                self.report(f'GROMP for shear rate {str_srate} failed')
+                self.report(f'GROMP for deformation velocity {defvel} failed')
                 return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_MISSING_OUTPUT
 
             _, node = launch_shell_job(
@@ -728,29 +750,29 @@ class MonomerWorkChain(WorkChain):
             )
 
             self.report(f'Submitted job: {node}')
-            self.to_context(**{f'nemd_{str_srate}': node})
+            self.to_context(**{f'nemd_{str_defvel}': node})
 
     def do_nemd_serial(self) -> bool:
-        """Check if there are remaining shear rates to run in serial."""
-        return self.ctx.nemd_serial_cnt < len(self.inputs.shear_rates)
+        """Check if there are remaining deformation velocity to run in serial."""
+        return self.ctx.nemd_serial_cnt < len(self.inputs.deform_velocities)
 
     def submit_nemd_run_serial(self):
-        """Submit the serial NEMD WorkChain."""
-        srate = self.inputs.shear_rates[self.ctx.nemd_serial_cnt]
-        str_srate = self.ctx.str_shear_rates[srate]
+        """Submit the next NEMD run in serial."""
+        defvel = self.inputs.deform_velocities[self.ctx.nemd_serial_cnt]
+        str_defvel = self.ctx.str_defvel[defvel]
         self.ctx.nemd_serial_cnt += 1
 
-        tpr_calc = self.ctx[f'grompp_{str_srate}']
+        tpr_calc = self.ctx[f'grompp_{str_defvel}']
         if not tpr_calc.is_finished_ok:
-            self.report(f'GROMACS grompp for shear rate {str_srate} failed.')
+            self.report(f'GROMACS grompp for deformation velocity {defvel} failed.')
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_GROMP
         try:
             tpr_file = tpr_calc.outputs['aiida_tpr']
         except exc.NotExistentKeyError:
-            self.report(f'GROMP for shear rate {str_srate} failed')
+            self.report(f'GROMP for deformation velocity {defvel} failed')
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_MISSING_OUTPUT
 
-        self.report(f'Submitting GROMACS NEMD run for shear rate {str_srate} as a serial job...')
+        self.report(f'Submitting GROMACS NEMD run for deformation velocity {defvel} as a serial job...')
         metadata = copy.deepcopy(self.ctx.gmx_run_metadata)
         metadata['call_link_label'] = 'nemd_mdrun'
         _, node = launch_shell_job(
@@ -766,37 +788,37 @@ class MonomerWorkChain(WorkChain):
 
         self.report(f'Submitted job: {node}')
 
-        return ToContext(**{f'nemd_{str_srate}': node})
+        return ToContext(**{f'nemd_{str_defvel}': node})
 
     def inspect_nemd(self):
         """Collect .edr files from the NEMD parallel run."""
         self.report('Collecting .edr files from NEMD runs...')
 
-        calc_map = {srate: self.ctx[f'nemd_{str_srate}'] for srate, str_srate in self.ctx.str_shear_rates.items()}
-        failed = [srate for srate, calc in calc_map.items() if not calc.is_finished_ok]
+        calc_map = {defvel: self.ctx[f'nemd_{str_defvel}'] for defvel, str_defvel in self.ctx.str_defvel.items()}
+        failed = [defvel for defvel, calc in calc_map.items() if not calc.is_finished_ok]
         if failed:
-            self.report(f'NEMD runs for shear rates {failed} did not finish successfully.')
+            self.report(f'NEMD runs for deformation velocities {failed} did not finish successfully.')
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_NEMD
 
         edr_files = {}
         edr_outputs = {}
         self.ctx.edr_outputs = {}
-        for srate, calc in calc_map.items():
-            str_srate = self.ctx.str_shear_rates[srate]
+        for defvel, calc in calc_map.items():
+            str_defvel = self.ctx.str_defvel[defvel]
             edr_file = calc.outputs['aiida_edr']
-            edr_files[srate] = edr_file
-            edr_outputs[f'edr_{str_srate}'] = edr_file
-            self.report(f'Collected .edr file for shear rate {srate}')
+            edr_files[defvel] = edr_file
+            edr_outputs[f'edr_{str_defvel}'] = edr_file
+            self.report(f'Collected .edr file for deformation velocity {defvel}')
 
         self.ctx.edr_files = edr_files
         self.out('nemd', edr_outputs)
 
     def submit_energy_parallel(self):
         """Run `gmx energy` to extract pressure data from each EDR file."""
-        self.report('Submitting GROMACS energy extraction runs for each shear rate...')
+        self.report('Submitting GROMACS energy extraction runs for each deformation velocity...')
         self.ctx.pressure_xvg = {}
-        for srate, edr_file in self.ctx.edr_files.items():
-            str_srate = self.ctx.str_shear_rates[srate]
+        for defvel, edr_file in self.ctx.edr_files.items():
+            str_defvel = self.ctx.str_defvel[defvel]
             _, node = launch_shell_job(
                 self.ctx.gmx_code_local,
                 arguments=f'energy -f {{edr}} -o {BASENAME}.xvg',
@@ -819,21 +841,21 @@ class MonomerWorkChain(WorkChain):
             )
 
             self.report(f'Submitted job: {node}')
-            self.to_context(**{f'energy_{str_srate}': node})
+            self.to_context(**{f'energy_{str_defvel}': node})
 
     def inspect_energy(self):
         """Collect .xvg files from the energy extraction runs."""
-        calc_map = {srate: self.ctx[f'energy_{str_srate}'] for srate, str_srate in self.ctx.str_shear_rates.items()}
+        calc_map = {defvel: self.ctx[f'energy_{str_defvel}'] for defvel, str_defvel in self.ctx.str_defvel.items()}
 
-        failed = [srate for srate, calc in calc_map.items() if not calc.is_finished_ok]
+        failed = [defvel for defvel, calc in calc_map.items() if not calc.is_finished_ok]
         if failed:
-            self.report(f'Energy extraction runs for shear rates {failed} did not finish successfully.')
+            self.report(f'Energy extraction runs for deformation velocities {failed} did not finish successfully.')
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_ENERGY
 
         self.ctx.pressure_xvg = {}
-        for srate, calc in calc_map.items():
+        for defvel, calc in calc_map.items():
             xvg_file = calc.outputs['aiida_xvg']
-            self.ctx.pressure_xvg[srate] = xvg_file
+            self.ctx.pressure_xvg[defvel] = xvg_file
 
     def extract_equilibrated_box_length(self):
         """Extract box length from the equilibrated .gro file."""
@@ -845,24 +867,40 @@ class MonomerWorkChain(WorkChain):
     def collect_pressure_averages(self):
         """Collect average pressures from the postprocessing workchain."""
         pressures = {}
-        for srate in self.inputs.shear_rates:
-            str_srate = self.ctx.str_shear_rates[srate]
-            xvg_file = self.ctx.pressure_xvg[srate]
+        for defvel in self.inputs.deform_velocities:
+            str_defvel = self.ctx.str_defvel[defvel]
+            xvg_file = self.ctx.pressure_xvg[defvel]
             avg_pressure = fnc.extract_pressure_from_xvg(xvg_file)
-            pressures[f'pressure_{str_srate}'] = avg_pressure
-            self.report(f"Average pressure for shear rate {srate}: {avg_pressure.value} bar")
+            pressures[f'pressure_{str_defvel}'] = avg_pressure
+            self.report(f"Average pressure for deformation velocity {defvel}: {avg_pressure.value} bar")
 
-        self.ctx.pressures = fnc.join_pressure_results(self.inputs.shear_rates, **pressures)
+        self.ctx.pressures = fnc.join_pressure_results(self.inputs.deform_velocities, **pressures)
 
-    def compute_viscosities(self):
+    def compute_viscosity_data(self):
         """Compute average pressures, shear rates, and viscosities."""
-        array = fnc.compute_viscosities(
-            deformation_velocities=self.inputs.shear_rates,
+        res = fnc.compute_viscosities(
+            deformation_velocities=self.inputs.deform_velocities,
             pressures=self.ctx.pressures,
             box_length=self.ctx.box_length_nm
         )
 
-        self.out('viscosity_data', array)
+        self.ctx.viscosity_data = res
+        self.out('viscosity_data', res)
+
+    def fit_viscosity(self):
+        """Fit viscosity data to the Eyring model."""
+        try:
+            dct = fnc.fit_viscosity(self.ctx.viscosity_data)
+        except ValueError:
+            self.report('Fitting viscosity data to Eyring model failed.')
+        else:
+            eta_N = dct['eta_N']
+            sigma_E = dct['sigma_E']
+            self.out('eta_N', eta_N)
+            self.out('sigma_E', sigma_E)
+            self.report(
+                f'Fitted viscosity data to Eyring model: eta_N={eta_N.value:.3e}, sigma_E={sigma_E.value:.3e}'
+            )
 
     def on_terminated(self):
         """Clean the working directories of all child calculations if `clean_workdir=True` in the inputs."""

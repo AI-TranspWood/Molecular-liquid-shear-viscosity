@@ -7,6 +7,8 @@ import numpy as np
 from rdkit import Chem
 from rdkit.Chem import rdMolDescriptors
 
+from ..viscosity import fit_viscosity_eyring
+
 
 def string_safe_float(value: float) -> str:
     """Convert a float to an aiida-context safe string"""
@@ -256,11 +258,11 @@ def generate_gromacs_equilibration_input(
     return orm.SinglefileData.from_string(template, filename='equilibrate.mdp')
 
 @calcfunction
-def generate_gromacs_shear_rate_input(
+def generate_gromacs_deform_vel_input(
         nsteps: orm.Int,
         time_step: orm.Float,
         ref_t: orm.Float,
-        shear_rate: orm.Float,
+        deform_vel: orm.Float,
     ):
     """Generate a basic GROMACS shear rate input file."""
     template = '\n'.join([
@@ -294,7 +296,7 @@ def generate_gromacs_shear_rate_input(
         'tau_t               = 1.0',
         'Pcoupl              = no',
 
-        f'deform              = 0.0 0.0 0.0 {shear_rate.value} 0.0 0.0',
+        f'deform              = 0.0 0.0 0.0 {deform_vel.value} 0.0 0.0',
         'deform-init-flow    = yes',
     ])
 
@@ -338,16 +340,16 @@ def extract_pressure_from_xvg(xvg_file: orm.SinglefileData) -> orm.List:
 
 @calcfunction
 def join_pressure_results(
-        shear_rates: orm.List,
+        deform_vel: orm.List,
         **pressure_results,
     ) -> orm.List:
     """Join pressure results from multiple calculations into a single list."""
     pressures = []
-    for srate in shear_rates:
-        str_srate = string_safe_float(srate)
-        pressure = pressure_results.get(f'pressure_{str_srate}', None)
+    for defvel in deform_vel:
+        str_defvel = string_safe_float(defvel)
+        pressure = pressure_results.get(f'pressure_{str_defvel}', None)
         if pressure is None:
-            raise ValueError(f"Missing pressure result for shear rate {srate}!")
+            raise ValueError(f"Missing pressure result for deformation velocity {defvel}!")
         pressures.append(pressure.value)
 
     return orm.List(list=pressures)
@@ -379,3 +381,23 @@ def compute_viscosities(
     array.set_array('viscosities', np.array(viscosities))
 
     return array
+
+@calcfunction
+def fit_viscosity(
+        viscosity_data: orm.ArrayData,
+    ) -> dict[str, orm.Float]:
+    """Fit viscosity data to the Eyring model."""
+    shear_rates = viscosity_data.get_array('shear_rates')
+    viscosities = viscosity_data.get_array('viscosities')
+
+    success, eta_N, sigma_E = fit_viscosity_eyring(shear_rates, viscosities)
+
+    if not success:
+        raise ValueError('Curve fitting to the Eyring model failed!')
+
+    res = {
+        'eta_N': orm.Float(eta_N),
+        'sigma_E': orm.Float(sigma_E),
+    }
+
+    return res
