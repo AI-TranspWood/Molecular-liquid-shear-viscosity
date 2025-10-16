@@ -138,16 +138,6 @@ WITH_MPI = OverridableOption(
     '-i', '--with-mpi', is_flag=True, default=False, show_default=True, help='Run the calculations with MPI enabled.'
 )
 
-PARENT_FOLDER = OverridableOption(
-    '-P',
-    '--parent-folder',
-    'parent_folder',
-    type=types.DataParamType(sub_classes=('aiida.data:core.remote',)),
-    show_default=True,
-    required=False,
-    help='The PK of a parent remote folder (for restarts).'
-)
-
 DAEMON = OverridableOption(
     '-d',
     '--daemon',
