@@ -257,18 +257,12 @@ def generate_gromacs_equilibration_input(
 
     return orm.SinglefileData.from_string(template, filename='equilibrate.mdp')
 
-@calcfunction
-def generate_gromacs_deform_vel_input(
-        nsteps: orm.Int,
-        time_step: orm.Float,
-        ref_t: orm.Float,
-        deform_vel: orm.Float,
-    ):
+def _generate_gromacs_deform_vel_input(nsteps: int, time_step: float, ref_t: float, deform_vel: float):
     """Generate a basic GROMACS shear rate input file."""
     template = '\n'.join([
         'integrator          = md',
-        f'nsteps              = {nsteps.value}',
-        f'dt                  = {time_step.value}',
+        f'nsteps              = {nsteps}',
+        f'dt                  = {time_step}',
         'nstxout-compressed  = 3000000',
         'nstvout             = 0',
         'nstlog              = 1000',
@@ -290,17 +284,38 @@ def generate_gromacs_deform_vel_input(
         'rcoulomb            = 1.0',
         'DispCorr            = EnerPres',
 
-        f'ref_t               = {ref_t.value}',
+        f'ref_t               = {ref_t}',
         'Tcoupl              = v-rescale',
         'tc-grps             = system',
         'tau_t               = 1.0',
         'Pcoupl              = no',
 
-        f'deform              = 0.0 0.0 0.0 {deform_vel.value} 0.0 0.0',
+        f'deform              = 0.0 0.0 0.0 {deform_vel} 0.0 0.0',
         'deform-init-flow    = yes',
     ])
 
-    return orm.SinglefileData.from_string(template, filename='aiida.mdp')
+    return template
+
+@calcfunction
+def generate_gromacs_deform_vel_inputs(
+        nsteps: orm.Int,
+        time_step: orm.Float,
+        ref_t: orm.Float,
+        deform_velocities: orm.List,
+    ) -> dict[str, orm.SinglefileData]:
+    """Generate a basic GROMACS shear rate input file."""
+    res = {}
+    for defvel in deform_velocities:
+        str_defvel = string_safe_float(defvel)
+        template = _generate_gromacs_deform_vel_input(
+            nsteps=nsteps.value,
+            time_step=time_step.value,
+            ref_t=ref_t.value,
+            deform_vel=defvel,
+        )
+        res[f'mdp_{str_defvel}'] = orm.SinglefileData.from_string(template, filename='aiida.mdp')
+
+    return res
 
 @calcfunction
 def extract_deformation_velocities(mdp_files):

@@ -157,7 +157,7 @@ class MonomerWorkChain(WorkChain):
 
             cls.extract_equilibrated_box_length,
 
-            # cls.make_nemd_inputs,
+            cls.make_nemd_inputs,
             cls.submit_nemd_init,
             if_(cls.should_do_alltogheter)(
                 cls.submit_nemd_run_parallel,
@@ -677,9 +677,18 @@ class MonomerWorkChain(WorkChain):
         self.ctx.equilibrated_gro = equilibrated_gro
         self.out('equilibrated_gro', equilibrated_gro)
 
-    # def make_nemd_inputs(self):
-    #     """Prepare input files for NEMD simulations with different deformation velocities."""
-    #     self.report('Preparing NEMD input files for each deformation velocity...')
+    def make_nemd_inputs(self):
+        """Prepare input files for NEMD simulations with different deformation velocities."""
+        self.report('Preparing NEMD input files for each deformation velocity...')
+
+        self.ctx.str_defvel = {defvel: fnc.string_safe_float(defvel) for defvel in self.inputs.deform_velocities}
+
+        self.ctx.mdp_files = fnc.generate_gromacs_deform_vel_inputs(
+            nsteps=self.inputs.num_steps,
+            time_step=self.inputs.time_step,
+            ref_t=self.inputs.reference_temperature,
+            deform_velocities=self.inputs.deform_velocities
+        )
 
     def submit_nemd_init(self):
         """Submit GROMACS grompp for each deformation velocity to generate .tpr files."""
@@ -687,16 +696,9 @@ class MonomerWorkChain(WorkChain):
         metadata = copy.deepcopy(self.ctx.gromacs_serial_metadata)
         metadata['call_link_label'] = 'nemd_grompp'
         fname = 'aiida.tpr'
-        self.ctx.str_defvel = {}
-        for defvel in self.inputs.deform_velocities:
-            str_defvel = fnc.string_safe_float(defvel)
+        for defvel, str_defvel in self.ctx.str_defvel.items():
             self.ctx.str_defvel[defvel] = str_defvel
-            mdp_file = fnc.generate_gromacs_deform_vel_input(
-                nsteps=self.inputs.num_steps,
-                time_step=self.inputs.time_step,
-                ref_t=self.inputs.reference_temperature,
-                deform_vel=orm.Float(defvel)
-            )
+            mdp_file = self.ctx.mdp_files[f'mdp_{str_defvel}']
             _, node = launch_shell_job(
                 self.ctx.gmx_code_local,
                 arguments='grompp -f {mdpfile} -c {grofile} -r {grofile} -p {topfile} -o ' + fname,
