@@ -74,7 +74,7 @@ REFERENCE_TEMPERATURE = OverridableOption(
     '-T',
     '--temperature',
     'reference_temperature',
-    type=click.FLOAT,
+    type=click.FloatRange(min=0.0, min_open=True),
     help='The reference temperature in Kelvin for the simulation.'
 )
 
@@ -82,7 +82,7 @@ NMOLS = OverridableOption(
     '-N',
     '--num-molecules',
     'nmols',
-    type=click.INT,
+    type=click.IntRange(min=1),
     help='The number of molecules to include in the simulation box.'
 )
 
@@ -90,21 +90,21 @@ NUM_STEPS = OverridableOption(
     '-n',
     '--num-steps',
     'num_steps',
-    type=click.INT,
+    type=click.IntRange(min=1),
     help='The number of MD steps to perform in the production run.'
 )
 
 NUM_STEPS_MINIMIZATION = OverridableOption(
     '--num-steps-minimization',
     'num_steps_min',
-    type=click.INT,
+    type=click.IntRange(min=1),
     help='The number of MD steps to use for the energy minimization.'
 )
 
 NUM_STEPS_EQUIBRATION = OverridableOption(
     '--num-steps-equibration',
     'num_steps_eq',
-    type=click.INT,
+    type=click.IntRange(min=1),
     help='The number of MD steps to use for the equilibration run.'
 )
 
@@ -112,14 +112,14 @@ TIME_STEP = OverridableOption(
     '-t',
     '--time-step',
     'time_step',
-    type=click.FLOAT,
+    type=click.FloatRange(min=0.0, min_open=True),
     help='The time step (in ps) to use for the MD simulations.'
 )
 
 MAX_NUM_MACHINES = OverridableOption(
     '-m',
     '--max-num-machines',
-    type=click.INT,
+    type=click.IntRange(min=1),
     default=1,
     show_default=True,
     help='The maximum number of machines (nodes) to use for the calculations.'
@@ -128,7 +128,7 @@ MAX_NUM_MACHINES = OverridableOption(
 MAX_WALLCLOCK_SECONDS = OverridableOption(
     '-w',
     '--max-wallclock-seconds',
-    type=click.INT,
+    type=click.IntRange(min=1),
     default=1800,
     show_default=True,
     help='the maximum wallclock time in seconds to set for the calculations.'
