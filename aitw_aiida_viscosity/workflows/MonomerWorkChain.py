@@ -704,7 +704,6 @@ class MonomerWorkChain(WorkChain):
         metadata['call_link_label'] = 'nemd_grompp'
         fname = 'aiida.tpr'
         for defvel, str_defvel in self.ctx.str_defvel.items():
-            self.ctx.str_defvel[defvel] = str_defvel
             mdp_file = self.ctx.mdp_files[f'mdp_{str_defvel}']
             _, node = launch_shell_job(
                 self.ctx.gmx_code_local,
