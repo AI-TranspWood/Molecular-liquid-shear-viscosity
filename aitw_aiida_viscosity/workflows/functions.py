@@ -363,6 +363,7 @@ def compute_viscosities(
     """Compute shear rates from deformation velocities and box length."""
     box_length_nm = box_length.value
 
+    deform_vel = []
     shear_rates = []
     viscosities = []
 
@@ -372,13 +373,23 @@ def compute_viscosities(
         viscosity_Pa_s = pressure_Pa / shear_rate  # [Pa.s]
         viscosity_mPa_s = viscosity_Pa_s * 1000  # [mPa.s]
 
+        deform_vel.append(deform_vel_nm_per_ps)
         shear_rates.append(shear_rate)
         viscosities.append(viscosity_mPa_s)
 
+    # Ensure arrays are sorted by increasing deformation velocity
+    order_args = np.argsort(def_vels)
+
+    def_vels = np.array(deform_vel)[order_args]
+    srate_array = np.array(shear_rates)[order_args]
+    visc_array = np.array(viscosities)[order_args]
+    pressures_array = np.array(pressures.get_list())[ord]
+
     array = orm.ArrayData()
-    array.set_array('pressure_averages', np.array(pressures.get_list()))
-    array.set_array('shear_rates', np.array(shear_rates))
-    array.set_array('viscosities', np.array(viscosities))
+    array.set_array('deformation_velocities', def_vels)
+    array.set_array('pressure_averages', pressures_array)
+    array.set_array('shear_rates', srate_array)
+    array.set_array('viscosities', visc_array)
 
     return array
 
