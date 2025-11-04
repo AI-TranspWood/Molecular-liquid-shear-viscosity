@@ -220,11 +220,11 @@ class MonomerWorkChain(WorkChain):
         )
         spec.output(
             'eta_N', valid_type=orm.Float, required=False,
-            help='TODO description of quantity'
+            help='Newtonian viscosity in millipascal-seconds'
         )
         spec.output(
             'sigma_E', valid_type=orm.Float, required=False,
-            help='TODO description of quantity'
+            help='Eyring stress in millipascals'
         )
 
         # ERRORS ############################################################################
