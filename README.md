@@ -88,13 +88,13 @@ OUTPUT:
 Plotting the results
 
 ```bash
-aitw-viscosity data plot-viscosity 7171 --show-plot
+aitw-viscosity data plot-viscosity 9561 --show-plot
 ```
 
 Replace the PK of the viscosity `ArrayData` with the actual PK from your run.\
 Use `--help` to see all the available options.
 
-**NOTE**: Note all possible inputs to the workchain are exposed through the CLI. For more advanced usage, consider running the workchain programmatically.
+**NOTE**: Not all possible inputs to the workchain are exposed through the CLI. For more advanced usage, consider running the workchain programmatically.
 
 ### Programmatically
 
