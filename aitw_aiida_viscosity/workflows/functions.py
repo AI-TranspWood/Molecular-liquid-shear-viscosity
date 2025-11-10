@@ -175,7 +175,10 @@ def generate_veloxchem_input(basis_set: orm.Str) -> orm.SinglefileData:
         # 'basis = vlx.MolecularBasis.read(molecule, "6-31G*")',
         f'basis = vlx.MolecularBasis.read(molecule, "{basis_set.value}")',
         'resp_drv = vlx.RespChargesDriver()',
-        'resp_charges = resp_drv.compute(molecule, basis)',
+        'try:',
+        '    resp_charges = resp_drv.compute(molecule, basis)',
+        'except:',
+        '    resp_charges = resp_drv.compute(molecule, basis, "resp")',
     ])
 
     return orm.SinglefileData.from_string(template, filename='aiida_vlx.py')
@@ -346,6 +349,8 @@ def extract_pressure_from_xvg(xvg_file: orm.SinglefileData) -> orm.List:
     """Extract pressure values from a GROMACS .xvg file."""
     with xvg_file.open() as file_handle:
         data = np.loadtxt(file_handle, comments=['@', '#'])
+    if data.size == 0:
+        raise ValueError('The provided XVG file is empty or contains no data.')
     avg_pressure = - np.mean(data[:, 1])  # Convert to a positive value
     return orm.Float(avg_pressure)
 

@@ -67,6 +67,11 @@ class MonomerWorkChain(WorkChain):
             help='The MD time step in picoseconds.'
         )
         spec.input(
+            'averaging_start_time', valid_type=orm.Float,
+            default=lambda: orm.Float(0.0),
+            help='The time in picoseconds to skip before starting the averaging of the pressure tensor.'
+        )
+        spec.input(
             'deform_velocities', valid_type=orm.List,
             default=lambda: orm.List(list=[0.005, 0.002, 0.05, 0.02, 0.01, 0.1, 0.2]),
             validator=validate_deform_velocities,
@@ -129,6 +134,7 @@ class MonomerWorkChain(WorkChain):
 
         # OUTLINE ############################################################################
         spec.outline(
+            cls.validate_inputs,
             cls.setup,
 
             cls.submit_acpype,
@@ -229,6 +235,10 @@ class MonomerWorkChain(WorkChain):
 
         # ERRORS ############################################################################
         spec.exit_code(
+            200, 'ERROR_INVALID_AVERAGING_START_TIME',
+            message='The averaging start time is greater than or equal to the total simulation time.'
+        )
+        spec.exit_code(
             300, 'ERROR_ACPYPE_FAILED',
             message='The ACPYPE calculation did not finish successfully.'
         )
@@ -280,6 +290,16 @@ class MonomerWorkChain(WorkChain):
             344, 'ERROR_SUB_PROCESS_FAILED_GMX_ENERGY',
             message='A GROMACS energy subprocess calculation failed.'
         )
+
+    def validate_inputs(self):
+        """Permorm validation on the inputs that require knowledge of multiple inputs."""
+        total_sim_time = self.inputs.num_steps.value * self.inputs.time_step.value
+        if self.inputs.averaging_start_time.value >= total_sim_time:
+            self.report(
+                f'Averaging start time {self.inputs.averaging_start_time.value} ps is '
+                f'greater than or equal to total simulation time {total_sim_time} ps.'
+            )
+            return self.exit_codes.ERROR_INVALID_AVERAGING_START_TIME
 
     def setup(self):
         """Setup context variables."""
@@ -829,11 +849,12 @@ class MonomerWorkChain(WorkChain):
             str_defvel = self.ctx.str_defvel[defvel]
             _, node = launch_shell_job(
                 self.ctx.gmx_code_local,
-                arguments=f'energy -f {{edr}} -o {BASENAME}.xvg',
+                arguments=f'energy -f {{edr}} -o {BASENAME}.xvg -b {{start_time}}',
                 nodes={
                     'edr': edr_file,
-                    # Select term 38, confirm with 0
-                    'stdin': orm.SinglefileData.from_string('38\n0\n', filename='stdin'),
+                    'start_time': self.inputs.averaging_start_time,
+                    # Select term Pres-XY as the quantity to be analyzed, confirm with 0
+                    'stdin': orm.SinglefileData.from_string('Pres-XY\n0\n', filename='stdin'),
                 },
                 outputs=[f'{BASENAME}.xvg'],
                 metadata={
