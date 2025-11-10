@@ -175,7 +175,7 @@ def generate_veloxchem_input(basis_set: orm.Str) -> orm.SinglefileData:
         # 'basis = vlx.MolecularBasis.read(molecule, "6-31G*")',
         f'basis = vlx.MolecularBasis.read(molecule, "{basis_set.value}")',
         'resp_drv = vlx.RespChargesDriver()',
-        'resp_charges = resp_drv.compute(molecule, basis)',
+        'resp_charges = resp_drv.compute(molecule, basis, "resp")',
     ])
 
     return orm.SinglefileData.from_string(template, filename='aiida_vlx.py')
