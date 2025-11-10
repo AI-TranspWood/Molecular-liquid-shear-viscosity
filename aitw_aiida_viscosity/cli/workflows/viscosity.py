@@ -25,6 +25,7 @@ from ..utils import launch, options
 @options.FORCE_FIELD(required=False)
 @options.NMOLS(required=False)
 @options.TIME_STEP(required=False)
+@options.AVERAGING_START_TIME(required=False)
 @options.CLEAN_WORKDIR()
 # Resources
 @options.MAX_NUM_MACHINES()
@@ -43,6 +44,7 @@ def launch_workflow(
     deform_velocities,
     num_steps_min, num_steps_eq,
     nmols, force_field, time_step,
+    averaging_start_time,
     # Resources
     max_num_machines, max_wallclock_seconds, with_mpi, daemon
 ):
@@ -67,6 +69,8 @@ def launch_workflow(
         builder.gromacs_minimization_steps = orm.Int(num_steps_min)
     if num_steps_eq is not None:
         builder.gromacs_equilibration_steps = orm.Int(num_steps_eq)
+    if averaging_start_time is not None:
+        builder.averaging_start_time = orm.Float(averaging_start_time)
 
     builder.acpype_code = acpype_code
     builder.obabel_code = obabel_code

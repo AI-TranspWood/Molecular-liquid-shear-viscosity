@@ -67,6 +67,11 @@ class MonomerWorkChain(WorkChain):
             help='The MD time step in picoseconds.'
         )
         spec.input(
+            'averaging_start_time', valid_type=orm.Float,
+            default=lambda: orm.Float(0.0),
+            help='The time in picoseconds to skip before starting the averaging of the pressure tensor.'
+        )
+        spec.input(
             'deform_velocities', valid_type=orm.List,
             default=lambda: orm.List(list=[0.005, 0.002, 0.05, 0.02, 0.01, 0.1, 0.2]),
             validator=validate_deform_velocities,
@@ -829,11 +834,12 @@ class MonomerWorkChain(WorkChain):
             str_defvel = self.ctx.str_defvel[defvel]
             _, node = launch_shell_job(
                 self.ctx.gmx_code_local,
-                arguments=f'energy -f {{edr}} -o {BASENAME}.xvg',
+                arguments=f'energy -f {{edr}} -o {BASENAME}.xvg -b {{start_time}}',
                 nodes={
                     'edr': edr_file,
-                    # Select term 38, confirm with 0
-                    'stdin': orm.SinglefileData.from_string('38\n0\n', filename='stdin'),
+                    'start_time': self.inputs.averaging_start_time,
+                    # Select term Pres-XY as the quantity to be analyzed, confirm with 0
+                    'stdin': orm.SinglefileData.from_string('Pres-XY\n0\n', filename='stdin'),
                 },
                 outputs=[f'{BASENAME}.xvg'],
                 metadata={

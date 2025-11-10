@@ -108,6 +108,13 @@ NUM_STEPS_EQUIBRATION = OverridableOption(
     help='The number of MD steps to use for the equilibration run.'
 )
 
+AVERAGING_START_TIME = OverridableOption(
+    '--averaging-start-time',
+    'averaging_start_time',
+    type=click.FloatRange(min=0.0, min_open=True),
+    help='The time (in ps) after which to start averaging the pressure tensor for viscosity calculation.'
+)
+
 TIME_STEP = OverridableOption(
     '-t',
     '--time-step',
