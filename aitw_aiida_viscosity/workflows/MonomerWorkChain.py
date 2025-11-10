@@ -134,6 +134,7 @@ class MonomerWorkChain(WorkChain):
 
         # OUTLINE ############################################################################
         spec.outline(
+            cls.validate_inputs,
             cls.setup,
 
             cls.submit_acpype,
@@ -234,6 +235,10 @@ class MonomerWorkChain(WorkChain):
 
         # ERRORS ############################################################################
         spec.exit_code(
+            200, 'ERROR_INVALID_AVERAGING_START_TIME',
+            message='The averaging start time is greater than or equal to the total simulation time.'
+        )
+        spec.exit_code(
             300, 'ERROR_ACPYPE_FAILED',
             message='The ACPYPE calculation did not finish successfully.'
         )
@@ -285,6 +290,16 @@ class MonomerWorkChain(WorkChain):
             344, 'ERROR_SUB_PROCESS_FAILED_GMX_ENERGY',
             message='A GROMACS energy subprocess calculation failed.'
         )
+
+    def validate_inputs(self):
+        """Permorm validation on the inputs that require knowledge of multiple inputs."""
+        total_sim_time = self.inputs.num_steps.value * self.inputs.time_step.value
+        if self.inputs.averaging_start_time.value >= total_sim_time:
+            self.report(
+                f'Averaging start time {self.inputs.averaging_start_time.value} ps is '
+                f'greater than or equal to total simulation time {total_sim_time} ps.'
+            )
+            return self.exit_codes.ERROR_INVALID_AVERAGING_START_TIME
 
     def setup(self):
         """Setup context variables."""

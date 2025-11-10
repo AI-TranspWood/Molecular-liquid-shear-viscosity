@@ -349,6 +349,8 @@ def extract_pressure_from_xvg(xvg_file: orm.SinglefileData) -> orm.List:
     """Extract pressure values from a GROMACS .xvg file."""
     with xvg_file.open() as file_handle:
         data = np.loadtxt(file_handle, comments=['@', '#'])
+    if data.size == 0:
+        raise ValueError('The provided XVG file is empty or contains no data.')
     avg_pressure = - np.mean(data[:, 1])  # Convert to a positive value
     return orm.Float(avg_pressure)
 
