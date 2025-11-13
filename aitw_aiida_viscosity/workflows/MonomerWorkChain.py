@@ -4,13 +4,14 @@ import copy
 from aiida import orm
 from aiida.common import exceptions as exc
 from aiida.engine import ToContext, WorkChain, if_, while_
-from aiida.plugins import SchedulerFactory
+from aiida.plugins import CalculationFactory, SchedulerFactory
 from aiida_shell import launch_shell_job
 
 from . import functions as fnc
 
 BASENAME = 'aiida'
 DIRECT_SCHEDULER = SchedulerFactory('core.direct')
+ShellJob = CalculationFactory('core.shell')
 
 def clean_calcjob_remote(node):
     """Clean the remote directory of a ``CalcJobNode``."""
@@ -111,20 +112,13 @@ class MonomerWorkChain(WorkChain):
             help='Code for running `gmx` or `gmx_mpi` locally for initialization/serial runs.'
         )
 
-        spec.input(
-            'with_mpi', valid_type=orm.Bool,
-            default=lambda: orm.Bool(False),
-            help='If `True`, run calculations with MPI when possible.'
-        )
-        spec.input(
-            'max_num_machines', valid_type=orm.Int,
-            default=lambda: orm.Int(1),
-            help='The maximum number of machines (nodes) to use for the calculations.'
-        )
-        spec.input(
-            'max_wallclock_seconds', valid_type=orm.Int,
-            default=lambda: orm.Int(3600),
-            help='The maximum wallclock time in seconds for the calculations.'
+        spec.expose_inputs(
+            ShellJob,
+            namespace='shelljob',
+            include=('metadata', ),
+            namespace_options={
+                'required': True, 'populate_defaults': False
+            }
         )
         spec.input(
             'clean_workdir', valid_type=orm.Bool,
@@ -292,7 +286,7 @@ class MonomerWorkChain(WorkChain):
         )
 
     def validate_inputs(self):
-        """Permorm validation on the inputs that require knowledge of multiple inputs."""
+        """Perform validation on the inputs that require knowledge of multiple inputs."""
         total_sim_time = self.inputs.num_steps.value * self.inputs.time_step.value
         if self.inputs.averaging_start_time.value >= total_sim_time:
             self.report(
@@ -301,9 +295,53 @@ class MonomerWorkChain(WorkChain):
             )
             return self.exit_codes.ERROR_INVALID_AVERAGING_START_TIME
 
+    def _create_metadata(self):
+        """Setup the metadata templates for the calculations."""
+        gmx_computer: orm.Computer = self.inputs.gmx_code.computer
+
+        metadata_tpl = dict(self.inputs.shelljob.metadata)
+        options = metadata_tpl['options'] = dict(metadata_tpl.get('options', {}))
+        resources = options['resources'] = dict(options.get('resources', {}))
+
+        if 'max_wallclock_seconds' not in options:
+            self.report('WARNING: max_wallclock_seconds not set in metadata; using default of 3600 seconds.')
+            options['max_wallclock_seconds'] = 3600
+
+        if 'num_machines' not in resources:
+            self.report('WARNING: num_machines not set in metadata; using default of 1 machine.')
+            resources['num_machines'] = 1
+
+        computer_num_mpiprocs = gmx_computer.get_default_mpiprocs_per_machine()
+        if 'num_mpiprocs_per_machine' in resources:
+            nmpm = resources['num_mpiprocs_per_machine']
+            self.report(
+                f'Using `num_mpiprocs_per_machine` from metadata: {nmpm} instead of value from'
+                f'computer {computer_num_mpiprocs}.'
+            )
+        else:
+            resources['num_mpiprocs_per_machine'] = computer_num_mpiprocs
+
+        max_mem = gmx_computer.get_default_memory_per_machine()
+        if max_mem is not None:
+            options['max_memory_kb'] = max_mem
+
+        options['redirect_stderr'] = True
+
+        serial_mdata = copy.deepcopy(metadata_tpl)
+        parall_mdata = copy.deepcopy(metadata_tpl)
+
+        serial_mdata['options']['withmpi'] = False
+        serial_mdata['options']['resources']['num_machines'] = 1
+        serial_mdata['options']['resources']['num_mpiprocs_per_machine'] = 1
+
+        self.ctx.gmx_serial_metadata = serial_mdata
+        self.ctx.gmx_parall_metadata = parall_mdata
+
     def setup(self):
         """Setup context variables."""
         # Use remote code if local code not provided
+        self._create_metadata()
+
         gmx_remote = self.inputs.gmx_code
         gmx_local = self.inputs.gmx_code_local if 'gmx_code_local' in self.inputs else gmx_remote
         self.report(f'Using GROMACS <{gmx_remote.pk}> for remote execution.')
@@ -318,32 +356,6 @@ class MonomerWorkChain(WorkChain):
 
         gmx_computer: orm.Computer = self.inputs.gmx_code.computer
         gmx_sched = gmx_computer.get_scheduler()
-        self.ctx.gromacs_serial_metadata = {
-            'options': {
-                'withmpi': False,
-                'resources': {
-                    'num_machines': 1,
-                    'num_mpiprocs_per_machine': 1,
-                },
-                'max_wallclock_seconds': self.inputs.max_wallclock_seconds.value,
-                'redirect_stderr': True,
-            }
-        }
-        self.ctx.gmx_run_metadata = ptr = {
-            'options': {
-                'withmpi': self.inputs.with_mpi.value,
-                'resources': {
-                    'num_machines': self.inputs.max_num_machines.value,
-                    'num_mpiprocs_per_machine': gmx_computer.get_default_mpiprocs_per_machine(),
-                },
-                'max_wallclock_seconds': self.inputs.max_wallclock_seconds.value,
-                'redirect_stderr': True,
-            }
-        }
-
-        max_mem = gmx_computer.get_default_memory_per_machine()
-        if max_mem is not None:
-            ptr['options']['max_memory_kb'] = max_mem
 
         self.ctx.gmx_computer = gmx_computer
         self.ctx.gmx_scheduler = gmx_sched
@@ -517,7 +529,7 @@ class MonomerWorkChain(WorkChain):
     def submit_insertmol(self):
         self.report(f'Running GROMACS insert-molecules to create a box of {self.inputs.nmols.value} molecules... ')
         filename = f'{BASENAME}.gro'
-        metadata = copy.deepcopy(self.ctx.gromacs_serial_metadata)
+        metadata = copy.deepcopy(self.ctx.gmx_serial_metadata)
         metadata['call_link_label'] = 'insert_molecules'
         _, node = launch_shell_job(
             self.ctx.gmx_code_local,
@@ -563,7 +575,7 @@ class MonomerWorkChain(WorkChain):
     def submit_minimization_init(self):
         """Initialize GROMACS minimization run to generate .tpr file."""
         self.report('Running GROMACS minimization initialization...')
-        metadata = copy.deepcopy(self.ctx.gromacs_serial_metadata)
+        metadata = copy.deepcopy(self.ctx.gmx_serial_metadata)
         metadata['call_link_label'] = 'minimization_grompp'
         _, node = launch_shell_job(
             self.ctx.gmx_code_local,
@@ -595,7 +607,7 @@ class MonomerWorkChain(WorkChain):
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_MISSING_OUTPUT
 
         self.report('Running GROMACS minimization mdrun...')
-        metadata = copy.deepcopy(self.ctx.gmx_run_metadata)
+        metadata = copy.deepcopy(self.ctx.gmx_parall_metadata)
         metadata['call_link_label'] = 'minimization_mdrun'
         # gmx_mpi mdrun -v -deffnm minimize
         _, node = launch_shell_job(
@@ -638,7 +650,7 @@ class MonomerWorkChain(WorkChain):
     def submit_equilibration_init(self):
         """Initialize GROMACS equilibration run to generate .tpr file."""
         self.report('Running GROMACS equilibration run INIT...')
-        metadata = copy.deepcopy(self.ctx.gromacs_serial_metadata)
+        metadata = copy.deepcopy(self.ctx.gmx_serial_metadata)
         metadata['call_link_label'] = 'equilibration_grompp'
         out_filename = 'equilibrate.tpr'
         _, node = launch_shell_job(
@@ -671,7 +683,7 @@ class MonomerWorkChain(WorkChain):
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_MISSING_OUTPUT
 
         self.report('Running GROMACS equilibration run MDRUN...')
-        metadata = copy.deepcopy(self.ctx.gmx_run_metadata)
+        metadata = copy.deepcopy(self.ctx.gmx_parall_metadata)
         metadata['call_link_label'] = 'equilibration_mdrun'
         out_filename = 'equilibrate.gro'
         _, node = launch_shell_job(
@@ -720,7 +732,7 @@ class MonomerWorkChain(WorkChain):
     def submit_nemd_init(self):
         """Submit GROMACS grompp for each deformation velocity to generate .tpr files."""
         self.report('Running GROMACS NEMD initialization for each deformation velocity...')
-        metadata = copy.deepcopy(self.ctx.gromacs_serial_metadata)
+        metadata = copy.deepcopy(self.ctx.gmx_serial_metadata)
         metadata['call_link_label'] = 'nemd_grompp'
         fname = 'aiida.tpr'
         for defvel, str_defvel in self.ctx.str_defvel.items():
@@ -738,7 +750,7 @@ class MonomerWorkChain(WorkChain):
                 outputs=[fname],
                 submit=True
             )
-            self.report(f'Submitted job for deformation velocity {defvel}: {node}')
+            self.report(f'Submitted job for deformation velocity INIT {defvel}: {node}')
             self.to_context(**{f'grompp_{str_defvel}': node})
 
     def should_do_alltogheter(self) -> bool:
@@ -753,7 +765,7 @@ class MonomerWorkChain(WorkChain):
     def submit_nemd_run_parallel(self):
         """Submit all NEMD runs as parallel/concurrent jobs."""
         self.report('Submitting GROMACS NEMD runs as parallel jobs...')
-        metadata = copy.deepcopy(self.ctx.gmx_run_metadata)
+        metadata = copy.deepcopy(self.ctx.gmx_parall_metadata)
         metadata['call_link_label'] = 'nemd_mdrun'
         for defvel, str_defvel in self.ctx.str_defvel.items():
             tpr_calc = self.ctx[f'grompp_{str_defvel}']
@@ -777,7 +789,7 @@ class MonomerWorkChain(WorkChain):
                 submit=True
             )
 
-            self.report(f'Submitted job: {node}')
+            self.report(f'Submitted job for NEMD run: {node}')
             self.to_context(**{f'nemd_{str_defvel}': node})
 
     def do_nemd_serial(self) -> bool:
@@ -801,7 +813,7 @@ class MonomerWorkChain(WorkChain):
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_GMX_MISSING_OUTPUT
 
         self.report(f'Submitting GROMACS NEMD run for deformation velocity {defvel} as a serial job...')
-        metadata = copy.deepcopy(self.ctx.gmx_run_metadata)
+        metadata = copy.deepcopy(self.ctx.gmx_parall_metadata)
         metadata['call_link_label'] = 'nemd_mdrun'
         _, node = launch_shell_job(
             self.inputs.gmx_code,
@@ -814,7 +826,7 @@ class MonomerWorkChain(WorkChain):
             submit=True
         )
 
-        self.report(f'Submitted job: {node}')
+        self.report(f'Submitted job for NEMD run: {node}')
 
         return ToContext(**{f'nemd_{str_defvel}': node})
 

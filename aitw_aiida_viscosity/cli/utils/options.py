@@ -123,13 +123,19 @@ TIME_STEP = OverridableOption(
     help='The time step (in ps) to use for the MD simulations.'
 )
 
-MAX_NUM_MACHINES = OverridableOption(
+NUM_NODES = OverridableOption(
     '-m',
-    '--max-num-machines',
+    '--num-nodes',
     type=click.IntRange(min=1),
     default=1,
     show_default=True,
-    help='The maximum number of machines (nodes) to use for the calculations.'
+    help='The number of nodes to use for the calculations.'
+)
+
+NUM_MPIPROCS_PER_MACHINE = OverridableOption(
+    '--num-mpiprocs-per-machine',
+    type=click.IntRange(min=1),
+    help='The number of MPI processes to use per node.'
 )
 
 MAX_WALLCLOCK_SECONDS = OverridableOption(
@@ -142,7 +148,11 @@ MAX_WALLCLOCK_SECONDS = OverridableOption(
 )
 
 WITH_MPI = OverridableOption(
-    '-i', '--with-mpi', is_flag=True, default=False, show_default=True, help='Run the calculations with MPI enabled.'
+    '--with-mpi/--without-mpi',
+    type=bool,
+    default=True,
+    show_default=True,
+    help='Run the calculations with MPI enabled.'
 )
 
 DAEMON = OverridableOption(
