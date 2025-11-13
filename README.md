@@ -100,6 +100,25 @@ Use `--help` to see all the available options.
 
 See the [CLI file](aitw_aiida_viscosity/cli/workflows/viscosity.py) for an example of how to run the workchain programmatically.
 
+EG: The same code in the function `launch_workflow` could be adjusted and used in a python script to automate launching the workflow for multiple molecules/parameters at once.
+Using the daemon (requires AiiDA to be configured with RabbitMQ and a database) is required to run all the submitted workchains in parallel.
+
+### Tips
+
+When running the `MonomerWorkChain` on a remote computer (e.g. an HPC cluster) it is suggested to also install some of the required codes locally on the machine to speed up the calculation and avoid submitting many serial jobs to the cluster.
+In particular the following are always run serially:
+- ACPYPE
+- OpenBabel
+- Veloxchem
+
+GROMACS will also run several initialization calculations that only requires one core.
+For this reason the workchain allows as an input 2 different GROMACS codes:
+- `gmx_code`: used for parallel runs
+- `gmx_code_local`: used for single core runs
+
+Using a local GROMACS installation for `gmx_code_local` will also improve the speed of the workchains.
+This can also be provided through the CLI with the `--gromacs-local` option.
+
 ### Tab autocompletion
 
 Enabling tab autocompletion https://click.palletsprojects.com/en/stable/shell-completion/
