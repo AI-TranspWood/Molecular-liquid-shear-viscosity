@@ -28,7 +28,8 @@ from ..utils import launch, options
 @options.AVERAGING_START_TIME(required=False)
 @options.CLEAN_WORKDIR()
 # Resources
-@options.MAX_NUM_MACHINES()
+@options.NUM_NODES()
+@options.NUM_MPIPROCS_PER_MACHINE(required=False)
 @options.MAX_WALLCLOCK_SECONDS()
 @options.WITH_MPI()
 @options.DAEMON()
@@ -46,7 +47,8 @@ def launch_workflow(
     nmols, force_field, time_step,
     averaging_start_time,
     # Resources
-    max_num_machines, max_wallclock_seconds, with_mpi, daemon
+    num_nodes, num_mpiprocs_per_machine, max_wallclock_seconds,
+    with_mpi, daemon
 ):
     """Run a `MonomerWorkChain` to compute the viscosity of a liquid."""
     from aiida.plugins import WorkflowFactory
@@ -81,8 +83,16 @@ def launch_workflow(
 
     builder.clean_workdir = orm.Bool(clean_workdir)
 
-    builder.max_num_machines = orm.Int(max_num_machines)
-    builder.max_wallclock_seconds = orm.Int(max_wallclock_seconds)
-    builder.with_mpi = orm.Bool(with_mpi)
+    mdata_options = {'resources': {}}
+    resources = mdata_options['resources']
+
+    resources['num_machines'] = num_nodes
+    mdata_options['withmpi'] = with_mpi
+    mdata_options['max_wallclock_seconds'] = max_wallclock_seconds
+    if num_mpiprocs_per_machine is not None:
+        resources['num_mpiprocs_per_machine'] = num_mpiprocs_per_machine
+
+    # builder.metadata = metadata
+    builder.shelljob.metadata.options = mdata_options
 
     launch.launch_process(builder, daemon)
