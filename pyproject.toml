@@ -59,6 +59,8 @@ tui = [
 aitw-viscosity = 'aitw_aiida_viscosity.cli:cmd_root'
 
 [project.entry-points.'aiida.workflows']
+'aitw.veloxchem.resp_charges' = 'aitw_aiida_viscosity.workflows:RespChargesWorkChain'
+'aitw.gromacs.equilibration' = 'aitw_aiida_viscosity.workflows:GromacsEquilibrationWorkChain'
 'aitw.gromacs.viscosity' = 'aitw_aiida_viscosity.workflows:MonomerWorkChain'
 
 [tool.flit.module]
