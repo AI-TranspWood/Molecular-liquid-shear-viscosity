@@ -1,12 +1,12 @@
 # AiiDA Workchain for Viscosity
 
-AiiDA workflow for automated calculation of shear viscosity of a molecular liquid
+[AiiDA](https://aiida.readthedocs.io/projects/aiida-core/en/stable/) workflow for automated calculation of shear viscosity of a molecular liquid
 
 ## Features
 
-- Generation of Gromacs molecular topology using ACPYPE and GAFF force field from SMILES string
-- RESP partial charge calculation using Veloxchem
-- Parallel shear viscosity calculation for several shear rates using Gromacs
+- Generation of Gromacs molecular topology using [ACPYPE](https://github.com/alanwilter/acpype?tab=readme-ov-file) and GAFF force field from SMILES string
+- RESP partial charge calculation using [Veloxchem](https://veloxchem.org/docs/intro.html)
+- Parallel shear viscosity calculation for several shear rates using [Gromacs](https://www.gromacs.org/)
 - Output: Newtonian shear viscosity
 
 ![Workflow Diagram](images/workflow.png)
