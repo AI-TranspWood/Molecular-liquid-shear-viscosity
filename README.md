@@ -25,10 +25,21 @@ The extra dependencies are optional and used for:
 
 ## Usage
 
-The package provides the following AiiDA entry point that can be used to load the workchain:
+The package provides the following AiiDA entry point that can be used to load the workchains
 
-- `aitw.gromacs.viscosity`: Compute the viscosity of a molecule starting from the SMILES string.
+### Main workchain
 
+Workchains performing the full calculations advertised by the package.
+
+- `aitw.gromacs.viscosity`: Compute the viscosity of a molecule starting from the SMILES string (uses al the previou).
+
+### Sub-workchains
+
+Workchains performing smaller parts of the full calculation that can also be used independently.
+
+- `aitw.veloxchem.resp_charges`: Generate GROMACS input files with RESP charges computed using Veloxchem starting from a SMILES string.
+- `aitw.gromacs.equilibration`: Equilibrate a box of molecules using GROMACS starting.
+- `aitw.gromacs.nemd`: Perform Non-Equilibrium Molecular Dynamics (NEMD) simulations using GROMACS.
 
 ### CLI
 

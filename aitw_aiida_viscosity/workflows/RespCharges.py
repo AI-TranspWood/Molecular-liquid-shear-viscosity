@@ -17,12 +17,7 @@ class RespChargesWorkChain(WorkChain):
         super().define(spec)
 
         # INPUTS ############################################################################
-        spec.input('num_steps', valid_type=orm.Int, help='The number of MD steps to run in the NEMD simulation.')
         spec.input('smiles_string', valid_type=orm.Str, help='The SMILES string of the molecule to simulate.')
-        spec.input(
-            'reference_temperature', valid_type=orm.Float,
-            help='The reference temperature in Kelvin for the simulation.'
-        )
         spec.input(
             'force_field', valid_type=orm.Str,
             default=lambda: orm.Str('gaff2'),
@@ -51,8 +46,6 @@ class RespChargesWorkChain(WorkChain):
 
         # OUTLINE ############################################################################
         spec.outline(
-            cls.setup,
-
             cls.submit_acpype,
             cls.inspect_acpype,
 
@@ -106,12 +99,6 @@ class RespChargesWorkChain(WorkChain):
             325, 'ERROR_VELOXCHEM_MISSING_OUTPUT',
             message='VeloxChem did not produce the expected output file.'
         )
-
-    def setup(self):
-        """Setup context variables."""
-        # Use remote code if local code not provided
-        self.ctx.smiles_string = self.inputs.smiles_string.value
-        self.ctx.ff = self.inputs.force_field.value
 
     def submit_acpype(self):
         """Submit acpype and obabel calculations to generate initial structure and parameters."""
