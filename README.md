@@ -1,12 +1,12 @@
 # AiiDA Workchain for Viscosity
 
-AiiDA workflow for automated calculation of shear viscosity of a molecular liquid
+[AiiDA](https://aiida.readthedocs.io/projects/aiida-core/en/stable/) workflow for automated calculation of shear viscosity of a molecular liquid
 
 ## Features
 
-- Generation of Gromacs molecular topology using ACPYPE and GAFF force field from SMILES string
-- RESP partial charge calculation using Veloxchem
-- Parallel shear viscosity calculation for several shear rates using Gromacs
+- Generation of Gromacs molecular topology using [ACPYPE](https://github.com/alanwilter/acpype?tab=readme-ov-file) and GAFF force field from SMILES string
+- RESP partial charge calculation using [Veloxchem](https://veloxchem.org/docs/intro.html)
+- Parallel shear viscosity calculation for several shear rates using [Gromacs](https://www.gromacs.org/)
 - Output: Newtonian shear viscosity
 
 ![Workflow Diagram](images/workflow.png)
@@ -25,10 +25,21 @@ The extra dependencies are optional and used for:
 
 ## Usage
 
-The package provides the following AiiDA entry point that can be used to load the workchain:
+The package provides the following AiiDA entry point that can be used to load the workchains
 
-- `aitw.gromacs.viscosity`: Compute the viscosity of a molecule starting from the SMILES string.
+### Main workchain
 
+Workchains performing the full calculations advertised by the package.
+
+- `aitw.gromacs.viscosity`: Compute the viscosity of a molecule starting from the SMILES string (uses al the previou).
+
+### Sub-workchains
+
+Workchains performing smaller parts of the full calculation that can also be used independently.
+
+- `aitw.veloxchem.resp_charges`: Generate GROMACS input files with RESP charges computed using Veloxchem starting from a SMILES string.
+- `aitw.gromacs.equilibration`: Equilibrate a box of molecules using GROMACS starting.
+- `aitw.gromacs.nemd`: Perform Non-Equilibrium Molecular Dynamics (NEMD) simulations using GROMACS.
 
 ### CLI
 
