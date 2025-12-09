@@ -178,18 +178,9 @@ class MonomerWorkChain(WorkChain):
     def setup(self):
         """Setup context variables."""
         # Use remote code if local code not provided
-        self._create_metadata()
+        GromacsBaseWorkChain.setup(self)
 
-        gmx_remote = self.inputs.gmx_code
-        gmx_local = self.inputs.gmx_code_local if 'gmx_code_local' in self.inputs else gmx_remote
-        self.report(f'Using GROMACS <{gmx_remote.pk}> for remote execution.')
-        self.ctx.gmx_code_local = gmx_local
-        self.report(f'Using GROMACS <{gmx_local.pk}> for local execution.')
-
-        self.ctx.gmx_code_local = gmx_local
-
-        gmx_computer: orm.Computer = self.inputs.gmx_code.computer
-        gmx_sched = gmx_computer.get_scheduler()
+        gmx_sched = self.ctx.gmx_computer.get_scheduler()
         self.ctx.gmx_scheduler = gmx_sched
 
     def submit_resp_charges(self):
@@ -469,12 +460,4 @@ class MonomerWorkChain(WorkChain):
     def on_terminated(self):
         """Clean the working directories of all child calculations if `clean_workdir=True` in the inputs."""
         super().on_terminated()
-
-        if self.inputs.clean_workdir.value is False:
-            self.report('remote folders will not be cleaned')
-            return
-
-        cleaned_calcs = clean_workchain_calcs(self.node)
-
-        if cleaned_calcs:
-            self.report(f"cleaned remote folders of calculations: {' '.join(map(str, cleaned_calcs))}")
+        GromacsBaseWorkChain._on_terminated(self)

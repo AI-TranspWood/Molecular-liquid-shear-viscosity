@@ -45,11 +45,6 @@ class GromacsNEMDWorkChain(GromacsBaseWorkChain):
             message='A GROMACS NEMD subprocess calculation failed.'
         )
 
-    def setup(self):
-        """Setup context variables."""
-        self._create_metadata()
-        self._gmx_setup()
-
     def submit_nemd_init(self):
         """Submit GROMACS grompp for each deformation velocity to generate .tpr files."""
         node = self._submit_grompp_calc(

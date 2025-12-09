@@ -89,24 +89,6 @@ class GromacsEquilibrationWorkChain(GromacsBaseWorkChain):
             message='A GROMACS equilibration subprocess calculation failed.'
         )
 
-    def setup(self):
-        """Setup context variables."""
-        self._create_metadata()
-        self._gmx_setup()
-
-        self.ctx.nmols = self.inputs.nmols.value
-        self.ctx.box_size = self.inputs.box_size
-
-    def get_box_size(self):
-        """Approximate molar mass from SMILES string using RDKit and store as AiiDA Float node."""
-        box_size = fnc.get_box_size(
-            nmols=self.inputs.nmols,
-            smiles_string=self.inputs.smiles_string
-        )
-
-        self.report(f"Calculated box edge length: {box_size.value:.2f} nm")
-        self.ctx.box_size = box_size
-
     def submit_insertmol(self):
         self.report(f'Running GROMACS insert-molecules to create a box of {self.inputs.nmols.value} molecules... ')
         filename = f'{BASENAME}.gro'
@@ -121,7 +103,7 @@ class GromacsEquilibrationWorkChain(GromacsBaseWorkChain):
             nodes={
                 'grofile': self.inputs.gro_file,
                 'nmols': self.inputs.nmols,
-                'box_vector': self.ctx.box_size
+                'box_vector': self.inputs.box_size
             },
             metadata=metadata,
             outputs=[filename],

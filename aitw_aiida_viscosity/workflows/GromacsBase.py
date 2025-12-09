@@ -73,19 +73,12 @@ class GromacsBaseWorkChain(WorkChain):
             message='A GROMACS grompp subprocess calculation failed.'
         )
 
-    def _create_metadata(self):
-        """Setup the metadata templates for the calculations."""
+    def setup(self):
+        """Setup context variables."""
         gmx_computer: orm.Computer = self.inputs.gmx_code.computer
         metadata_tpl = dict(self.inputs.shelljob.metadata)
 
         serial_mdata, parall_mdata = create_metadata(gmx_computer, metadata_tpl, report_func=self.report)
-
-        self.ctx.gmx_serial_metadata = serial_mdata
-        self.ctx.gmx_parall_metadata = parall_mdata
-
-    def _gmx_setup(self):
-        """Setup context variables."""
-        self._create_metadata()
 
         gmx_remote = self.inputs.gmx_code
         gmx_local = self.inputs.gmx_code_local if 'gmx_code_local' in self.inputs else gmx_remote
@@ -95,6 +88,8 @@ class GromacsBaseWorkChain(WorkChain):
 
         self.ctx.gmx_code_local = gmx_local
         self.ctx.gmx_computer = self.inputs.gmx_code.computer
+        self.ctx.gmx_serial_metadata = serial_mdata
+        self.ctx.gmx_parall_metadata = parall_mdata
 
     def _submit_grompp_calc(
             self,
@@ -146,10 +141,8 @@ class GromacsBaseWorkChain(WorkChain):
 
         return tpr_file
 
-    def on_terminated(self):
+    def _on_terminated(self):
         """Clean the working directories of all child calculations if `clean_workdir=True` in the inputs."""
-        super().on_terminated()
-
         if self.inputs.clean_workdir.value is False:
             self.report('remote folders will not be cleaned')
             return
@@ -158,3 +151,8 @@ class GromacsBaseWorkChain(WorkChain):
 
         if cleaned_calcs:
             self.report(f"cleaned remote folders of calculations: {' '.join(map(str, cleaned_calcs))}")
+
+    def on_terminated(self):
+        """Clean the working directories of all child calculations if `clean_workdir=True` in the inputs."""
+        super().on_terminated()
+        self._on_terminated()
