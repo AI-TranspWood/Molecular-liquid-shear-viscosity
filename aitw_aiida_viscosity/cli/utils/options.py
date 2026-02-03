@@ -111,7 +111,7 @@ NUM_STEPS_EQUIBRATION = OverridableOption(
 AVERAGING_START_TIME = OverridableOption(
     '--averaging-start-time',
     'averaging_start_time',
-    type=click.FloatRange(min=0.0, min_open=True),
+    type=click.FloatRange(min=0.0, min_open=False),
     help='The time (in ps) after which to start averaging the pressure tensor for viscosity calculation.'
 )
 
