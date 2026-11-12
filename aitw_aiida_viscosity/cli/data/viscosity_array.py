@@ -86,7 +86,6 @@ def plot_viscosity(
     ax.legend()
     ax.grid(True, which='both', linestyle='--')
 
-    plt.tight_layout()
     fig.savefig(output_file)
     click.echo(f"Plot saved locally as '{output_file}'.")
 
