@@ -11,7 +11,34 @@
 
 ![Workflow Diagram](images/workflow.png)
 
-## Installation
+## Install
+
+### From EESSI
+
+Check the [EESSI documentation](https://www.eessi.io/docs/available_software/detail/AITW-viscosity) to see on which version of EESSI the package is available.
+
+Run on a [system with EESSI pre-installed](https://www.eessi.io/docs/systems/) or [install EESSI on your own system](https://www.eessi.io/docs/getting_access/native_installation/)
+
+Load the package from EESSI:
+
+```bash
+# Follow instructions of your system to initialize EESSI
+# For a local/native installation:
+# source /cvmfs/software.eessi.io/versions/2023.06/init/lmod/bash
+
+module load EESSI/2023.06  # Or the latest version that has the package available
+module load AITW-viscosity
+```
+
+### From PyPI
+
+```bash
+pip install AITW-aiida-viscosity[plotting,tui]
+```
+
+### From source (development version)
+
+Download the source code and install it using pip.
 
 ```bash
 cd <PATH to folder with pyproject.toml>
